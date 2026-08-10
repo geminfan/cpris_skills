@@ -11,10 +11,10 @@ description: 查询和分析 CPRIS 微信端后端工程的 REST API，并按需
 
 ## Token 管理
 
-- 当用户单独输入或粘贴疑似 Token 的长 Base64/Base64URL 字符串时，将它识别为候选登录 Token；接受可选的 `Bearer ` 前缀，不把普通短文本、JSON 或密码误当作 Token。
-- 先进行 Base64/Base64URL 格式检查（允许省略填充）；再使用默认网关请求 `GET /user/info`，在 `Authorization` 请求头中携带该 Token。仅在响应表明确认鉴权成功时，才将它作为登录 Token；格式可解码不代表已登录。
+- 仅当用户单独输入或粘贴的字符串去掉可选 `Bearer ` 前缀后长度不少于 64，且仅含 Base64/Base64URL 字符（末尾可有 `=`）时，才将它作为候选登录 Token；不处理普通短文本、JSON 或密码。
+- 先进行 Base64/Base64URL 格式检查（允许省略填充）；再使用默认网关请求 `GET /user/info` 验证。先以用户原样提供的值放入 `Authorization`；若未带前缀且收到 401/403，则仅额外重试一次 `Bearer <Token>`。仅在响应表明确认鉴权成功时，才将成功的请求头值作为登录 Token；格式可解码不代表已登录。
 - 验证通过后，将原始 Token（及保留的认证前缀，如有）写入当前用户本机的 `${CODEX_HOME}/cpris-wxapp-rest-api/credentials.json`；若未设置 `CODEX_HOME`，推荐路径为 `~/.codex/cpris-wxapp-rest-api/credentials.json`。目录和文件仅授予当前用户访问权限，且绝不写入 Skill 目录、工作区或版本库。
-- 后续调用受保护接口时，读取该本地文件，并在 `Authorization` 请求头中自动注入保存的值。缺失、无效或过期时，提示用户重新提供 Token，不尝试获取或伪造 Token。
+- 每次调用此 Skill 处理 API 请求时，先记住并解析上述固定凭据路径；调用受保护接口前从该本地文件读取 `gateway` 与 `authorization`，并在 `Authorization` 请求头中自动注入保存的值。不要依赖对话记忆保存 Token。缺失、无效或过期时，提示用户重新提供 Token，不尝试获取或伪造 Token。
 - 不在回复、日志、命令输出或文档中回显完整 Token；展示时仅保留首尾少量字符。用户要求清除 Token 时，删除上述本地凭据文件。
 
 ## 工作流程
