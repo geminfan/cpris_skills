@@ -8,6 +8,9 @@
 
 基于 `cpris_wxapp` Spring MVC 源码静态扫描生成的 REST API 查询与分析 Skill。
 
+- 默认网关：`https://teacherwx.cpris.com`
+- 用户粘贴长 Base64/Base64URL 登录 Token 时，Skill 会先通过 `GET /user/info` 验证；验证成功后保存到当前用户的 `${CODEX_HOME}/cpris-wxapp-rest-api/credentials.json`（未设置时为 `~/.codex/cpris-wxapp-rest-api/credentials.json`），供后续受保护接口调用使用。
+
 - 覆盖 179 个已识别的对外接口
 - 覆盖评估、儿童、家长、SaaS、训练和用户 6 个模块
 - 按“总览 → 模块 → 单接口”组织文档，适合按 URL 或业务快速定位

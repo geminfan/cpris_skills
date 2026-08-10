@@ -1,4 +1,4 @@
 interface:
   display_name: "CPRIS REST API"
-  short_description: "查询 CPRIS 微信端 REST 接口和调用链；调用前需配置 Token"
-  default_prompt: "Use $cpris-wxapp-rest-api to find and explain a CPRIS REST API endpoint."
+  short_description: "查询 CPRIS 微信端 REST 接口并管理已验证登录 Token"
+  default_prompt: "Use $cpris-wxapp-rest-api to call a CPRIS API with the default gateway and saved Token."
