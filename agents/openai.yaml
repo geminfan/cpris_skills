@@ -1,4 +1,4 @@
 interface:
-  display_name: "CPRIS REST API"
-  short_description: "查询 CPRIS 微信端 REST 接口并管理已验证登录 Token"
-  default_prompt: "Use $cpris-wxapp-rest-api to call a CPRIS API with the default gateway and saved Token."
+  display_name: "希普在线智能体"
+  short_description: "查询 CPRIS 微信端 REST 接口，自动认证并持久化登录 Token（网关固定 http://test.cpris.com）"
+  default_prompt: "Use $cpris-wxapp-rest-api to call a CPRIS API. Gateway is fixed to http://test.cpris.com; auto-authenticate and persist the login Token, prompting the user for one if not already saved."

@@ -2,14 +2,18 @@
 
 ## 默认网关
 
-`https://teacherwx.cpris.com`
+**固定网关：`http://test.cpris.com`**
 
-将此地址与接口路径拼接，例如：`https://teacherwx.cpris.com/user/info`。仅在用户明确提供其他网关时覆盖。
+所有 API 请求必须使用此网关地址，不允许覆盖。将此地址与接口路径拼接，例如：`http://test.cpris.com/user/info`。
 
 ## 登录 Token
 
-- 推荐凭据文件：`${CODEX_HOME}/cpris-wxapp-rest-api/credentials.json`；`CODEX_HOME` 未设置时使用 `~/.codex/cpris-wxapp-rest-api/credentials.json`。
-- 保存最小字段：`gateway`、`authorization` 与 `validatedAt`。`authorization` 必须保存最终验证成功的完整请求头值（含验证成功时使用的 `Bearer ` 前缀，如有）。
-- 每次 Skill 调用 API 时都先从该固定路径读取凭据，不能依赖对话记忆保存 Token。`gateway` 缺失时回退到本文件的默认网关。
-- 仅对去掉可选 `Bearer ` 前缀后长度不少于 64、且符合 Base64/Base64URL 字符集的字符串进行候选检查。以 `GET /user/info` 返回的成功鉴权结果作为最终验证依据：先原样发送；仅在无前缀且收到 401/403 时重试一次 `Bearer <Token>`。收到网络失败或无法确认的响应时，不保存或替换现有 Token。
-- 凭据仅用于请求的 `Authorization` 头；不要在 URL、查询参数、版本库、Skill 文件、回复或日志中暴露。
+- **凭据文件路径**：`${HERMES_HOME}/cpris-wxapp-rest-api/credentials.json`；`HERMES_HOME` 未设置时使用 `~/.hermes/cpris-wxapp-rest-api/credentials.json`。
+- **文件格式**：JSON 对象，包含 `gateway`（固定为 `http://test.cpris.com`）、`authorization`（完整请求头值，含 `Bearer ` 前缀）与 `validatedAt`（ISO 8601 时间戳）。
+- **自动注入**：每次 API 请求前从固定路径读取凭据，将 `authorization` 字段值注入到 `Authorization` 请求头。不依赖对话记忆保存 Token。
+- **验证规则**：
+  - 仅对去掉可选 `Bearer ` 前缀后长度不少于 64、且符合 Base64/Base64URL 字符集的字符串进行候选检查
+  - 使用 `GET /user/info` 验证：先原样发送；若无前缀且收到 401/403，重试一次 `Bearer <Token>`
+  - 仅在 HTTP 200 且返回用户信息时视为验证成功，保存成功时使用的完整请求头值
+  - 网络失败或无法确认的响应不保存或替换现有 Token
+- **Token 安全**：凭据仅用于 `Authorization` 头；不在 URL、查询参数、版本库、Skill 文件、回复或日志中暴露。展示时仅保留首尾各 6 字符。
