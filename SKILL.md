@@ -35,7 +35,7 @@ description: 查询和分析 CPRIS 微信端后端工程的 REST API，自动管
 
 ---
 
-**固定网关：`http://test.cpris.com`** — 所有 API 请求必须使用此网关，不允许覆盖。
+**固定网关：`https://teacherwx.cpris.com`** — 所有 API 请求必须使用此网关，不允许覆盖。
 
 ## Token 自动管理
 
