@@ -2,16 +2,18 @@
 
 静态扫描共识别 **179** 个对外 Controller 映射。
 
+所有调用走 AI 安全网关：`https://teacherwx.cpris.com/ai/gw/{service}/{业务路径}`（`X-Api-Key` 认证，响应已脱敏）。服务映射与认证规范见 [运行时配置](runtime-configuration.md)。
+
 ## 模块
 
-| 模块 | 接口数 | 文档 |
-|---|---:|---|
-| `assess` | 37 | [assess](./modules/assess.md) |
-| `children` | 20 | [children](./modules/children.md) |
-| `parent` | 55 | [parent](./modules/parent.md) |
-| `saas` | 20 | [saas](./modules/saas.md) |
-| `training` | 42 | [training](./modules/training.md) |
-| `user` | 5 | [user](./modules/user.md) |
+| 模块 | 接口数 | 网关 service | 文档 |
+|---|---:|---|---|
+| `assess` | 37 | `assess` | [assess](./modules/assess.md) |
+| `children` | 20 | `children` | [children](./modules/children.md) |
+| `parent` | 55 | `parent` | [parent](./modules/parent.md) |
+| `saas` | 20 | —（未对 AI 网关开放） | [saas](./modules/saas.md) |
+| `training` | 42 | `training` | [training](./modules/training.md) |
+| `user` | 5 | `user` | [user](./modules/user.md) |
 
 ## 说明
 
