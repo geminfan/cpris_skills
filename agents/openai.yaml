@@ -1,4 +1,4 @@
 interface:
   display_name: "希普在线智能体"
-  short_description: "通过 AI 安全网关（X-Api-Key 认证 + 敏感数据脱敏）查询和调用 CPRIS 微信端 REST 接口，网关固定 https://teacherwx.cpris.com"
-  default_prompt: "Use $cpris-wxapp-rest-api to call a CPRIS API via the AI gateway at https://teacherwx.cpris.com/ai/gw. Authenticate with an X-Api-Key (prompt the user for one if not already saved); responses are masked for sensitive data and must be used as-is."
+  short_description: "通过 AI 安全网关（X-Api-Key 认证 + 敏感数据脱敏）查询和调用 CPRIS 微信端 REST 接口，AI 网关默认 http://testai.cpris.com（业务网关 http://test.cpris.com 由网关内部转发，不直连）"
+  default_prompt: "Use $cpris-wxapp-rest-api to call a CPRIS API via the AI gateway at http://testai.cpris.com/ai/gw (override with CPRIS_AI_GATEWAY; never call the business gateway http://test.cpris.com directly). Authenticate with an X-Api-Key header only - the gateway exchanges it for a login token internally. Responses are masked for sensitive data and must be used as-is."

@@ -2,7 +2,7 @@
 
 静态扫描共识别 **179** 个对外 Controller 映射。
 
-所有调用走 AI 安全网关：`https://teacherwx.cpris.com/ai/gw/{service}/{业务路径}`（`X-Api-Key` 认证，响应已脱敏）。服务映射与认证规范见 [运行时配置](runtime-configuration.md)。
+所有调用走 AI 安全网关：`http://testai.cpris.com/ai/gw/{service}/{业务路径}`（默认地址，可用 `CPRIS_AI_GATEWAY` 覆盖；`X-Api-Key` 认证，网关内部换取登录 token 后转发，响应已脱敏）。业务网关 `http://test.cpris.com` 由 AI 网关内部转发，不直连。服务映射与认证规范见 [运行时配置](runtime-configuration.md)。
 
 ## 模块
 

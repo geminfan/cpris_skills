@@ -8,8 +8,9 @@
 
 基于 `cpris_wxapp` Spring MVC 源码静态扫描生成的 REST API 查询与分析 Skill，调用链路经过 `cpris_wxapp/ai` 模块的 **AI 安全网关**。
 
-- 固定网关：`https://test.cpris.com`，业务接口走 `/ai/gw/{service}/**` 前缀
-- 认证方式：请求头 `X-Api-Key`（AI 网关签发，绑定允许路径/方法与限流阈值）。用户粘贴 key 后，Skill 先 `GET /ai/gw/health` 探活，再以 `GET /ai/gw/user/user/info` 验证；验证成功后保存到 `${CODEX_HOME}/cpris-wxapp-rest-api/credentials.json`（未设置时为 `~/.codex/cpris-wxapp-rest-api/credentials.json`）。每次后续调用都会从该路径读取并注入 `X-Api-Key` 头
+- 网关地址（可配置默认值）：**AI 网关 `http://testai.cpris.com`**（Skill 唯一请求目标，业务接口走 `/ai/gw/{service}/**` 前缀）；**业务网关 `http://test.cpris.com`** 是 AI 网关内部转发的实际业务服务入口，Skill 不直连。AI 网关地址可用环境变量 `CPRIS_AI_GATEWAY` 覆盖
+- 认证方式：请求头 `X-Api-Key`。AI 网关拿这个 key 到 auth 的 `POST /ai/key/token` 换登录 JWT，再以 `Authorization: bearer {token}` 转发下游，`X-Api-Key` 不透传；key 的有效性由 auth 查 `t_ai_key` 表判定。用户粘贴 key 后，Skill 先 `GET /ai/gw/health` 探活，再以 `GET /ai/gw/user/user/info` 验证；验证成功后保存到 `${HERMES_HOME}/cpris-wxapp-rest-api/credentials.json`（未设置时为 `~/.hermes/cpris-wxapp-rest-api/credentials.json`）。每次后续调用都会从该路径读取并注入 `X-Api-Key` 头
+- 错误码语义：401（缺 key / key 不存在或已过期）、403（本地 ACL 拒绝该路径，或 key 无登录资格）、405（方法受限）、429（限流）、502（认证服务异常、下游不可达、脱敏失败）、503（网关停用或认证服务不可达）
 - 敏感数据合规：网关对 JSON 响应递归脱敏（姓名/身份证/手机号/邮箱/住址），Skill 直接使用脱敏后数据，禁止还原或绕过网关
 - saas 模块登录/短信/数据字典接口未对 AI 网关开放（敏感数据处理规范），Skill 拒绝调用
 

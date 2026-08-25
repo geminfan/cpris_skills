@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """CPRIS 微信端 REST API（AI 安全网关）认证与调用辅助脚本。
 
-固定网关：https://teacherwx.cpris.com
-业务接口：{网关}/ai/gw/{service}/{业务路径}（响应已经过敏感数据脱敏）
+AI 网关：默认 http://testai.cpris.com，覆盖优先级 环境变量 CPRIS_AI_GATEWAY
+        > 凭据文件 gateway 字段 > 默认值。
+业务接口：{AI 网关}/ai/gw/{service}/{业务路径}（响应已经过敏感数据脱敏）
+业务网关 http://test.cpris.com 是 AI 网关内部转发的目标，本脚本不直连。
 凭据文件：${HERMES_HOME}/cpris-wxapp-rest-api/credentials.json
            （HERMES_HOME 未设置时回退到 ~/.hermes/...）
 
@@ -17,11 +19,19 @@
                                           给完整网关路径 /ai/gw/user/user/info
 
 说明：
-  - key 校验：长度 >= 8 且仅含 A-Za-z0-9-_. （通常以 ak- 开头，不强制）。
+  - 调用方认证只用请求头 X-Api-Key。AI 网关内部会拿它到 auth 的
+    POST /ai/key/token 换登录 JWT，再以 Authorization: bearer {token} 转发下游，
+    X-Api-Key 不透传；脚本不需要也不应该自己带 Authorization 头。
+  - key 校验：长度 >= 8 且仅含 A-Za-z0-9-_. （通常以 ak- 开头，不强制）。key 是否
+    有效最终由 auth 查 t_ai_key 判定（api_key 命中、end_date 空或未过期、绑定的
+    员工存在且 is_login=1）。
   - 验证顺序：GET /ai/gw/health（白名单，探活）→ GET /ai/gw/user/user/info
-    （带 X-Api-Key）。401 = key 无效；200 = 验证成功；403/405/429/502 =
-    认证已通过但权限/频率/下游受限（保存并提示）；503 = 网关停用，不保存。
-  - saas 模块（登录/短信/数据字典等）未对 AI 网关开放，脚本直接拒绝。
+    （带 X-Api-Key）。200 = 验证成功（保存）；401 = key 不存在或已过期（不保存）；
+    403 看 msg：含「路径」= 本地 ACL 受限但 key 有效（保存），其他 403 = 换不到
+    token（不保存）；405/429 = 认证已通过（保存）；502/503 = 认证服务或网关异常，
+    有效性无法确认（不保存）。
+  - saas 模块（登录/短信/数据字典等）与 auth 的 /ai/key/token 未对调用方开放，
+    脚本直接拒绝。
   - 展示 key 时仅保留首尾各 4 字符。
 """
 import json
@@ -34,7 +44,8 @@ import urllib.error
 import urllib.parse
 from datetime import datetime, timezone
 
-GATEWAY = "https://teacherwx.cpris.com"
+# AI 网关默认地址；业务网关 http://test.cpris.com 是 AI 网关内部转发的目标，脚本不直连
+DEFAULT_GATEWAY = "http://testai.cpris.com"
 HEALTH_PATH = "/ai/gw/health"
 VERIFY_PATH = "/ai/gw/user/user/info"
 GW_PREFIX = "/ai/gw/"
@@ -59,10 +70,34 @@ SEGMENT_TO_SERVICE = {
 SAAS_SEGMENTS = {
     "login", "loginOut", "phone", "wx", "auth", "data", "files",
     "nation", "region", "sysBasedata",
+    # auth 的 API-Key 换 token 接口（/ai/key/token），只允许 AI 网关内部调用
+    "ai",
 }
 
 # saas auth 服务下的精确路径（挂在 /parent 前缀下，但属于登录接口）
 SAAS_EXACT_PATHS = {"/parent/phone/login", "/parent/wx/login"}
+
+
+def gateway():
+    """AI 网关地址：环境变量 CPRIS_AI_GATEWAY > 凭据文件 gateway 字段 > 默认值。"""
+    env = os.environ.get("CPRIS_AI_GATEWAY")
+    if env:
+        return env.rstrip("/")
+    creds = load_creds()
+    if creds and creds.get("gateway"):
+        return str(creds["gateway"]).rstrip("/")
+    return DEFAULT_GATEWAY
+
+
+def error_msg(body, default=""):
+    """从网关/auth 的错误响应体 {"code":..,"msg":".."} 里取 msg。"""
+    try:
+        data = json.loads(body)
+    except (TypeError, ValueError):
+        return default
+    if isinstance(data, dict):
+        return str(data.get("msg") or default)
+    return default
 
 
 def creds_path():
@@ -95,7 +130,7 @@ def save_creds(api_key):
     path = creds_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     data = {
-        "gateway": GATEWAY,
+        "gateway": gateway(),
         "apiKey": api_key,
         "validatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -139,7 +174,7 @@ def to_gateway_path(path):
 
 
 def _request(method, path, api_key=None, body=None, query=None):
-    url = GATEWAY + path
+    url = gateway() + path
     if query:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
     headers = {}
@@ -189,20 +224,33 @@ def cmd_login(api_key):
         print(f"✅ 验证成功，已保存 API-Key（{mask(raw)}）到 {creds_path()}")
         return 0
     if status == 401:
-        print("❌ API-Key 无效（401），未保存。请向平台管理员确认 key 是否已在"
-              " cpris.ai-gateway.auth.api-keys 中登记。", file=sys.stderr)
+        print("❌ API-Key 无效或已过期（401），未保存。请向平台管理员确认该 key 是否已在"
+              " auth 的 t_ai_key 表中登记、end_date 是否已过期。", file=sys.stderr)
         return 1
     if status == 403:
+        msg = error_msg(body, "无权访问")
+        if "路径" in msg:
+            # AI 网关本地 ACL 拒绝：key 本身有效，只是 allowed-paths 受限
+            save_creds(raw)
+            print(f"⚠️  key 有效但无权访问验证路径（403：{msg}），已保存（{mask(raw)}）。"
+                  "该 key 的 allowed-paths 受限，调用时请注意范围。")
+            return 0
+        # auth 侧拒绝：换不到登录 token（未绑定机构/用户、账号禁用、机构过期等）
+        print(f"❌ 该 API-Key 无法换取登录 token（403：{msg}），未保存。请管理员检查"
+              " t_ai_key 的 merchant_id/employee_id 绑定与 t_employee 的 is_login 状态。",
+              file=sys.stderr)
+        return 1
+    if status in (405, 429):
         save_creds(raw)
-        print(f"⚠️  key 认证有效但无权访问验证路径（403），已保存（{mask(raw)}）。"
-              "该 key 的允许路径受限，调用时请注意范围。")
-        return 0
-    if status in (405, 429, 502):
-        save_creds(raw)
-        reason = {405: "方法受限（405）", 429: "触发限流（429）",
-                  502: "下游服务暂不可达（502）"}[status]
+        reason = {405: "方法受限（405）", 429: "触发限流（429）"}[status]
         print(f"⚠️  key 认证已通过，但验证请求未成功：{reason}。已保存（{mask(raw)}）。")
         return 0
+    if status in (502, 503):
+        reason = {502: "认证服务返回异常或下游不可达（502）",
+                  503: "网关已停用或认证服务不可达（503）"}[status]
+        print(f"⚠️  {reason}，无法确认 key 有效性，未保存。响应片段：{body[:200]}",
+              file=sys.stderr)
+        return 1
     print(f"⚠️  验证返回 HTTP {status}，无法确认 key 有效性，未保存。"
           f"响应片段：{body[:200]}", file=sys.stderr)
     return 1
@@ -213,7 +261,7 @@ def cmd_status():
     if not creds or not creds.get("apiKey"):
         print("未配置：无有效 API-Key。请使用 'login <api-key>' 提供 AI 网关 API-Key。")
         return 1
-    print(f"已配置 | 网关: {creds.get('gateway', GATEWAY)} | "
+    print(f"已配置 | AI 网关: {gateway()} | "
           f"API-Key: {mask(creds['apiKey'])} | "
           f"验证时间: {creds.get('validatedAt', '未知')}")
     return 0
@@ -253,12 +301,19 @@ def cmd_call(method, path, body=None, query_pairs=None):
         return 1
     if status == 401:
         cmd_logout()
-        print("❌ API-Key 已失效（401），已清除凭据。请重新获取并登录。",
-              file=sys.stderr)
+        print("❌ API-Key 已失效（401）：t_ai_key 中查不到该 key 或 end_date 已过期，"
+              "已清除凭据。请重新获取并登录。", file=sys.stderr)
         return 1
     if status == 403:
-        print("❌ 该 API-Key 无权访问此路径（403）：路径不在 key 的允许范围内，"
-              "不要重试。请向管理员申请扩大 allowed-paths。", file=sys.stderr)
+        msg = error_msg(resp, "无权访问")
+        if "路径" in msg:
+            print(f"❌ 该 API-Key 无权访问此路径（403：{msg}）：路径不在 key 的 "
+                  "allowed-paths 范围内，不要重试。请向管理员申请扩大范围。",
+                  file=sys.stderr)
+        else:
+            print(f"❌ 该 API-Key 无法换取登录 token（403：{msg}）：可能未绑定机构/用户、"
+                  "绑定账号已禁用或机构已过期。凭据保留，请联系管理员处理。",
+                  file=sys.stderr)
         print(resp)
         return 1
     if status == 405:
@@ -271,12 +326,13 @@ def cmd_call(method, path, body=None, query_pairs=None):
               file=sys.stderr)
         return 1
     if status == 502:
-        print("❌ 下游服务不可达或脱敏处理失败（502）。请稍后重试；"
+        print("❌ 认证服务返回异常、下游服务不可达或脱敏处理失败（502）。请稍后重试；"
               "禁止绕过网关直连业务服务。", file=sys.stderr)
         print(resp)
         return 1
     if status == 503:
-        print("❌ AI 网关已停用（503）。请联系管理员。", file=sys.stderr)
+        print("❌ AI 网关已停用，或认证服务（auth）不可达（503）。凭据保留，"
+              "请联系管理员。", file=sys.stderr)
         return 1
     print(f"HTTP {status}")
     print(resp)
@@ -288,7 +344,8 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_login = sub.add_parser("login", help="验证并保存 AI 网关 API-Key")
-    p_login.add_argument("api_key", help="AI 网关签发的 API-Key（通常以 ak- 开头）")
+    p_login.add_argument("api_key",
+                         help="AI 网关 API-Key（登记在 t_ai_key，通常以 ak- 开头）")
 
     sub.add_parser("status", help="查看当前配置状态")
     sub.add_parser("logout", help="清除已保存的 API-Key")
