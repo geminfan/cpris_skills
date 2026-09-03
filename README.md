@@ -73,6 +73,8 @@ git add .gitignore README.md SKILL.md agents/openai.yaml scripts/cpris_auth.py r
 
 ## 资料边界
 
+儿童姓名（含昵称、曾用名及对应拼音）按 AI 网关成功响应原文直接显示，技能和调用脚本不再额外遮盖。家长、教师姓名及证件、电话、邮箱、住址等仍按网关规则处理；若部署中的后端已返回遮盖内容，技能不猜测或还原。
+
 保留原有 179 项 Controller 映射资料，修订路径定位、参数分组和调用资格；这是包含 SaaS、删除接口的静态快照，不是当前部署的开放接口数。merchant 虽已配置路由，快照没有其接口详情。
 
 脚本仅支持 JSON 请求/响应。文件上传需要遵循相同网关约束的 multipart 调用方。服务端总开关、ACL、机构/员工权限决定实际可用性；源码已知差异和脱敏边界见 [网关契约](references/gateway-contract.md)。
