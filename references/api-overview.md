@@ -1,22 +1,24 @@
 # CPRIS 微信端 REST API 总览
 
-静态扫描共识别 **179** 个对外 Controller 映射。
+原静态快照包含 **179** 项 Controller 映射。下表是收录文档数，包含不可调用的 SaaS 和删除接口，不代表当前部署的可调用接口数量。
 
-所有调用走 AI 安全网关：`http://testai.cpris.com/ai/gw/{service}/{业务路径}`（默认地址，可用 `CPRIS_AI_GATEWAY` 覆盖；`X-Api-Key` 认证，网关内部换取登录 token 后转发，响应已脱敏）。业务网关 `http://test.cpris.com` 由 AI 网关内部转发，不直连。服务映射与认证规范见 [运行时配置](runtime-configuration.md)。
+路径为 {aiGateway}/ai/gw/{service}/{业务路径}。默认测试 http://testai.cpris.com，正式 https://aiskills.cpris.com 需显式选择。仅使用 X-Api-Key，业务网关由服务端访问。
 
-## 模块
-
-| 模块 | 接口数 | 网关 service | 文档 |
+| 模块 | 文档接口数 | service | 范围 |
 |---|---:|---|---|
-| `assess` | 37 | `assess` | [assess](./modules/assess.md) |
-| `children` | 20 | `children` | [children](./modules/children.md) |
-| `parent` | 55 | `parent` | [parent](./modules/parent.md) |
-| `saas` | 20 | —（未对 AI 网关开放） | [saas](./modules/saas.md) |
-| `training` | 42 | `training` | [training](./modules/training.md) |
-| `user` | 5 | `user` | [user](./modules/user.md) |
+| [assess](modules/assess.md) | 37 | assess | 评估，删除接口禁止 |
+| [children](modules/children.md) | 20 | children | 儿童/监护人，删除接口禁止 |
+| [parent](modules/parent.md) | 55 | parent | 家长业务，删除接口禁止 |
+| [saas](modules/saas.md) | 20 | 无 | 仅源码参考，不供技能调用 |
+| [training](modules/training.md) | 42 | training | 训练/团队/计划，删除接口禁止 |
+| [user](modules/user.md) | 5 | user | 用户信息，头像上传需要 multipart 调用方 |
 
-## 说明
+merchant 已配置后端路由，但快照没有接口资料；不能仅凭存在路由猜测具体接口。
 
-- 仅统计未被注释的 Spring MVC `@GetMapping`、`@PostMapping`、`@PutMapping`、`@DeleteMapping` 与 `@PatchMapping`。
-- `DataController` 没有类级 `@RequestMapping`，其路由按方法注解直接记录。
-- 每个接口详情提供源码位置、Java 方法签名、参数来源推断、返回声明和直接 Service/Mapper/Client 调用。
+## 阅读方式
+
+1. 按业务选择模块，查看“AI 调用”列，再阅读接口详情。
+2. 从完整方法签名和参数分组确定请求；有源码时沿 cpris_wxapp/ 相对路径追踪。
+3. 按 [网关契约](gateway-contract.md) 判断范围及副作用，再按 [运行时配置](runtime-configuration.md) 选择环境。
+
+源码行号为快照定位，可能随源文件变更移动；调用链仅列出 Controller 中可识别的直接 Service/Mapper/Client 调用，未展开内部全部逻辑。

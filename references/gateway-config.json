@@ -1,0 +1,29 @@
+{
+  "defaultEnvironment": "test",
+  "environments": {
+    "test": {
+      "aiGateway": "http://testai.cpris.com",
+      "businessGateway": "http://test.cpris.com"
+    },
+    "production": {
+      "aiGateway": "https://aiskills.cpris.com",
+      "businessGateway": "https://teacherwx.cpris.com"
+    }
+  },
+  "prefixToService": {
+    "user": "user",
+    "merchant": "merchant",
+    "childrenInfo": "children",
+    "guardian": "children",
+    "parent": "parent",
+    "training": "training",
+    "team": "training",
+    "periodical": "training",
+    "iepLib": "training",
+    "assess": "assess",
+    "assessDefine": "assess",
+    "assessGuide": "assess"
+  },
+  "blockedPrefixes": ["login", "loginOut", "phone", "wx", "auth", "data", "files", "nation", "region", "sysBasedata", "ai", "actuator"],
+  "blockedPaths": ["/parent/phone/login", "/parent/wx/login"]
+}

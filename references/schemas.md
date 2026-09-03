@@ -1,24 +1,38 @@
 # 请求与响应约定
 
-## 网关路径换算
+## 路径和参数
 
-接口文档中的路径均为业务路径，调用时需换算为 AI 网关路径：
+详情记录业务路径，调用时按 [网关契约](gateway-contract.md) 添加 /ai/gw/{service}，环境由运行配置选择。
 
-```
-http://testai.cpris.com/ai/gw/{service}/{业务路径}
-```
+- @RequestBody：JSON 请求体；字段取决于 DTO/VO/Entity，不从类型名猜测。
+- @RequestParam：Query 或表单参数；name/value 为外部名称，required/defaultValue 影响必填规则。参考完整注解。
+- @PathVariable：替换路径模板变量并编码，不将花括号占位符直接发给服务端。
+- @RequestHeader：请求头参数；客户端身份仍仅使用 X-Api-Key，不手动传 Authorization 或方法覆盖头。
+- 无绑定注解：基础类型通常绑定 Query/表单，对象按 Spring MVC model attribute 处理，受实际部署设置影响。
+- MultipartFile：文件上传，不是 JSON。当前脚本不支持 multipart，专用调用方仍必须经过 AI 网关。
+- @ApiParam 是文档注解，不是独立业务参数；不能把注解内的逗号拆成多个参数。
 
-示例：文档路径 `/childrenInfo/page` → 网关路径 `/ai/gw/children/childrenInfo/page`。服务映射见 [运行时配置](runtime-configuration.md)。
+参数分组来自快照完整方法签名，不是 DTO 的完整字段 schema。必填性或字段含义缺失时根据签名及可用源码判断，没有材料则说明缺失。例如 /training/list 的必填参数为 date（yyyy-MM-dd），不是 page/size。
 
-## 请求参数
+## 脚本输出
 
-- 标有 `@RequestBody` 的参数为 JSON 请求体。
-- 标有 `@RequestParam`、`@PathVariable`、`@RequestHeader` 的参数分别来自 Query、路径和请求头。
-- 未标注参数的绑定行为受 Spring MVC 配置影响，应以方法签名与前端调用为准。
+stdout 为 JSON，成功示例：
 
-## 响应
+~~~json
+{"ok":true,"httpStatus":200,"data":{"code":200,"msg":"成功","data":{}}}
+~~~
 
-- 接口详情中的“声明返回类型”来自 Controller 方法签名。
-- 具体响应 JSON 字段由 `Result` / DTO / VO / Entity 等类型定义决定；可根据详情页的返回类型继续在源码中检索。
-- **实际响应已经过 AI 网关敏感数据脱敏**（姓名、身份证、手机号、邮箱、住址；自由文本中的同类内容也会被正则兜底脱敏）。脱敏后的值（如 `138****5678`）即为最终交付形态，禁止还原或推断。系统字段（childid、merchantid、code、msg、分页字段等）不脱敏。
-- 网关错误响应统一为 `{"code":<http 状态>, "msg":"<说明>"}`，状态码语义见 [SKILL.md](../SKILL.md) 的「错误码语义」。401/403 可能来自 AI 网关本地 ACL，也可能来自 auth 用 `X-Api-Key` 换登录 token 的校验（`t_ai_key` 记录、绑定用户状态），二者响应格式一致，靠 `msg` 区分。
+外层 data 保留后端 JSON 包装，内层 data 才是 R<T> 业务对象。静态 Java 类型不是完整的运行时 JSON schema。
+
+失败示例：
+
+~~~json
+{"ok":false,"httpStatus":200,"businessCode":502,"error":"业务返回失败；HTTP 成功不代表业务成功。"}
+~~~
+
+- 退出码 0 成功、1 请求/业务失败、2 配置/输入/本地处理失败。
+- status 只说明本地配置，health 只说明网关响应，都不代表业务权限。
+- 正常调用检查 HTTP 2xx 与存在的 code=200；login 还要求 code=200、data 为非空用户对象。
+- 错误说明由客户端生成，因后端部分错误分支未脱敏，不展示原始下游错误数据。
+- 非 JSON 内容、文件下载和 HEAD 等无 JSON 响应不作为可展示业务数据输出。
+- 正常 JSON 的敏感字段保持脱敏形态，部署开关和分支限制见 [网关契约](gateway-contract.md)。

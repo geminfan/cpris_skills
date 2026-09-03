@@ -1,373 +1,359 @@
 #!/usr/bin/env python3
-"""CPRIS 微信端 REST API（AI 安全网关）认证与调用辅助脚本。
-
-AI 网关：默认 http://testai.cpris.com，覆盖优先级 环境变量 CPRIS_AI_GATEWAY
-        > 凭据文件 gateway 字段 > 默认值。
-业务接口：{AI 网关}/ai/gw/{service}/{业务路径}（响应已经过敏感数据脱敏）
-业务网关 http://test.cpris.com 是 AI 网关内部转发的目标，本脚本不直连。
-凭据文件：${HERMES_HOME}/cpris-wxapp-rest-api/credentials.json
-           （HERMES_HOME 未设置时回退到 ~/.hermes/...）
-
-用法：
-  python cpris_auth.py login <api-key>    验证并保存 AI 网关 API-Key
-  python cpris_auth.py status             查看当前配置状态
-  python cpris_auth.py logout             清除已保存的 API-Key
-  python cpris_auth.py call <METHOD> <path> [--body '<json>'] [--query k=v ...]
-                                          用已保存 key 调用接口；业务路径
-                                          （如 /user/info）会自动补
-                                          /ai/gw/{service} 前缀，也可直接
-                                          给完整网关路径 /ai/gw/user/user/info
-
-说明：
-  - 调用方认证只用请求头 X-Api-Key。AI 网关内部会拿它到 auth 的
-    POST /ai/key/token 换登录 JWT，再以 Authorization: bearer {token} 转发下游，
-    X-Api-Key 不透传；脚本不需要也不应该自己带 Authorization 头。
-  - key 校验：长度 >= 8 且仅含 A-Za-z0-9-_. （通常以 ak- 开头，不强制）。key 是否
-    有效最终由 auth 查 t_ai_key 判定（api_key 命中、end_date 空或未过期、绑定的
-    员工存在且 is_login=1）。
-  - 验证顺序：GET /ai/gw/health（白名单，探活）→ GET /ai/gw/user/user/info
-    （带 X-Api-Key）。200 = 验证成功（保存）；401 = key 不存在或已过期（不保存）；
-    403 看 msg：含「路径」= 本地 ACL 受限但 key 有效（保存），其他 403 = 换不到
-    token（不保存）；405/429 = 认证已通过（保存）；502/503 = 认证服务或网关异常，
-    有效性无法确认（不保存）。
-  - saas 模块（登录/短信/数据字典等）与 auth 的 /ai/key/token 未对调用方开放，
-    脚本直接拒绝。
-  - 展示 key 时仅保留首尾各 4 字符。
-"""
+"""Portable CPRIS AI gateway client; Python 3.9+ standard library only."""
+import argparse
+import base64
+import ctypes
+import getpass
+import http.client
 import json
 import os
 import re
 import sys
-import argparse
-import urllib.request
+import tempfile
 import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
-# AI 网关默认地址；业务网关 http://test.cpris.com 是 AI 网关内部转发的目标，脚本不直连
-DEFAULT_GATEWAY = "http://testai.cpris.com"
+CONFIG = Path(__file__).resolve().parents[1] / "references" / "gateway-config.json"
 HEALTH_PATH = "/ai/gw/health"
 VERIFY_PATH = "/ai/gw/user/user/info"
-GW_PREFIX = "/ai/gw/"
-_KEY_RE = re.compile(r"^[A-Za-z0-9\-_.]+$")
-
-# 业务路径首段 -> 网关 service 名（与 cpris_wxapp/ai 的 routes 配置一致）
-SEGMENT_TO_SERVICE = {
-    "user": "user",
-    "childrenInfo": "children",
-    "guardian": "children",
-    "parent": "parent",
-    "training": "training",
-    "team": "training",
-    "periodical": "training",
-    "iepLib": "training",
-    "assess": "assess",
-    "assessDefine": "assess",
-    "assessGuide": "assess",
-}
-
-# saas 模块未对 AI 网关开放（敏感数据处理规范）
-SAAS_SEGMENTS = {
-    "login", "loginOut", "phone", "wx", "auth", "data", "files",
-    "nation", "region", "sysBasedata",
-    # auth 的 API-Key 换 token 接口（/ai/key/token），只允许 AI 网关内部调用
-    "ai",
-}
-
-# saas auth 服务下的精确路径（挂在 /parent 前缀下，但属于登录接口）
-SAAS_EXACT_PATHS = {"/parent/phone/login", "/parent/wx/login"}
+PREFIX = "/ai/gw/"
+DELETE_WORDS = ("delete", "remove", "destroy", "erase", "purge", "删除", "移除", "清除", "销毁")
+METHODS = ("GET", "POST", "PUT", "PATCH", "HEAD", "OPTIONS")
 
 
-def gateway():
-    """AI 网关地址：环境变量 CPRIS_AI_GATEWAY > 凭据文件 gateway 字段 > 默认值。"""
-    env = os.environ.get("CPRIS_AI_GATEWAY")
-    if env:
-        return env.rstrip("/")
-    creds = load_creds()
-    if creds and creds.get("gateway"):
-        return str(creds["gateway"]).rstrip("/")
-    return DEFAULT_GATEWAY
+class ClientError(Exception):
+    pass
 
 
-def error_msg(body, default=""):
-    """从网关/auth 的错误响应体 {"code":..,"msg":".."} 里取 msg。"""
-    try:
-        data = json.loads(body)
-    except (TypeError, ValueError):
-        return default
-    if isinstance(data, dict):
-        return str(data.get("msg") or default)
-    return default
-
-
-def creds_path():
-    home = os.environ.get("HERMES_HOME") or os.path.join(
-        os.path.expanduser("~"), ".hermes"
-    )
-    return os.path.join(home, "cpris-wxapp-rest-api", "credentials.json")
-
-
-def mask(value):
-    if not value:
-        return "(空)"
-    if len(value) <= 8:
-        return "****"
-    return f"{value[:4]}...{value[-4:]}"
-
-
-def load_creds():
-    path = creds_path()
-    if not os.path.isfile(path):
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def read_json(path):
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        raise ClientError("无法读取 JSON 配置或凭据文件，请检查文件格式和访问权限。") from None
+    if not isinstance(value, dict):
+        raise ClientError("配置或凭据文件必须是 JSON 对象。")
+    return value
 
 
-def save_creds(api_key):
-    path = creds_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    data = {
-        "gateway": gateway(),
-        "apiKey": api_key,
-        "validatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return data
-
-
-def is_key_candidate(raw):
-    raw = raw.strip()
-    return len(raw) >= 8 and bool(_KEY_RE.match(raw))
-
-
-def to_gateway_path(path):
-    """业务路径 -> 网关路径。已是 /ai/gw/ 前缀则原样返回。"""
-    if not path.startswith("/"):
-        path = "/" + path
-    if path.startswith(GW_PREFIX):
-        return path
-    if path in SAAS_EXACT_PATHS:
-        raise ValueError(
-            f"{path} 是 saas 模块登录接口，未对 AI 网关开放，禁止调用。"
-        )
-    segment = path.split("/", 2)[1] if path.count("/") >= 1 else ""
-    if segment in SAAS_SEGMENTS:
-        raise ValueError(
-            f"/{segment} 属于 saas 模块（登录/短信/数据字典），未对 AI 网关开放，禁止调用。"
-        )
-    service = SEGMENT_TO_SERVICE.get(segment)
-    if service is None:
-        raise ValueError(
-            f"无法识别业务路径 /{segment} 对应的网关服务。"
-            f"可用前缀：{', '.join(sorted(SEGMENT_TO_SERVICE))}；"
-            "或直接传入完整网关路径 /ai/gw/{service}/..."
-        )
-    return f"{GW_PREFIX}{service}{path}"
-
-
-def _request(method, path, api_key=None, body=None, query=None):
-    url = gateway() + path
-    if query:
-        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
-    headers = {}
-    if api_key:
-        headers["X-Api-Key"] = api_key
-    data = None
-    if body is not None:
-        data = body.encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode("utf-8", "replace")
-    except urllib.error.URLError as e:
-        return None, f"网络错误: {e.reason}"
-
-
-def cmd_login(api_key):
-    raw = api_key.strip()
-    if not is_key_candidate(raw):
-        print("❌ API-Key 格式不符：需 >= 8 字符且仅含 A-Za-z0-9-_. （通常以 ak- 开头）。",
-              file=sys.stderr)
-        return 2
-
-    # 1. 网关探活（白名单，无需 key）
-    status, body = _request("GET", HEALTH_PATH)
-    if status is None:
-        print(f"⚠️  网关不可达：{body}，未保存 key。", file=sys.stderr)
-        return 1
-    if status == 503:
-        print("⚠️  AI 网关总开关已关闭（503），无法验证 key，未保存。", file=sys.stderr)
-        return 1
-    if status != 200:
-        print(f"⚠️  网关健康检查返回 HTTP {status}，无法确认网关状态，未保存。"
-              f"响应片段：{body[:200]}", file=sys.stderr)
-        return 1
-
-    # 2. 验证 key
-    status, body = _request("GET", VERIFY_PATH, api_key=raw)
-    if status is None:
-        print(f"⚠️  {body}，未保存 key。", file=sys.stderr)
-        return 1
-    if status == 200:
-        save_creds(raw)
-        print(f"✅ 验证成功，已保存 API-Key（{mask(raw)}）到 {creds_path()}")
-        return 0
-    if status == 401:
-        print("❌ API-Key 无效或已过期（401），未保存。请向平台管理员确认该 key 是否已在"
-              " auth 的 t_ai_key 表中登记、end_date 是否已过期。", file=sys.stderr)
-        return 1
-    if status == 403:
-        msg = error_msg(body, "无权访问")
-        if "路径" in msg:
-            # AI 网关本地 ACL 拒绝：key 本身有效，只是 allowed-paths 受限
-            save_creds(raw)
-            print(f"⚠️  key 有效但无权访问验证路径（403：{msg}），已保存（{mask(raw)}）。"
-                  "该 key 的 allowed-paths 受限，调用时请注意范围。")
-            return 0
-        # auth 侧拒绝：换不到登录 token（未绑定机构/用户、账号禁用、机构过期等）
-        print(f"❌ 该 API-Key 无法换取登录 token（403：{msg}），未保存。请管理员检查"
-              " t_ai_key 的 merchant_id/employee_id 绑定与 t_employee 的 is_login 状态。",
-              file=sys.stderr)
-        return 1
-    if status in (405, 429):
-        save_creds(raw)
-        reason = {405: "方法受限（405）", 429: "触发限流（429）"}[status]
-        print(f"⚠️  key 认证已通过，但验证请求未成功：{reason}。已保存（{mask(raw)}）。")
-        return 0
-    if status in (502, 503):
-        reason = {502: "认证服务返回异常或下游不可达（502）",
-                  503: "网关已停用或认证服务不可达（503）"}[status]
-        print(f"⚠️  {reason}，无法确认 key 有效性，未保存。响应片段：{body[:200]}",
-              file=sys.stderr)
-        return 1
-    print(f"⚠️  验证返回 HTTP {status}，无法确认 key 有效性，未保存。"
-          f"响应片段：{body[:200]}", file=sys.stderr)
-    return 1
-
-
-def cmd_status():
-    creds = load_creds()
-    if not creds or not creds.get("apiKey"):
-        print("未配置：无有效 API-Key。请使用 'login <api-key>' 提供 AI 网关 API-Key。")
-        return 1
-    print(f"已配置 | AI 网关: {gateway()} | "
-          f"API-Key: {mask(creds['apiKey'])} | "
-          f"验证时间: {creds.get('validatedAt', '未知')}")
-    return 0
-
-
-def cmd_logout():
-    path = creds_path()
-    if os.path.isfile(path):
-        os.remove(path)
-        print(f"✅ 已清除凭据文件：{path}")
+def config_root():
+    custom = os.environ.get("CPRIS_CONFIG_HOME")
+    if custom:
+        root = Path(custom).expanduser()
+        if not root.is_absolute():
+            raise ClientError("CPRIS_CONFIG_HOME 必须是工作区之外的绝对路径。")
+    elif os.name == "nt":
+        root = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "cpris"
     else:
-        print("无凭据文件可清除。")
-    return 0
+        root = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "cpris"
+    root = root.resolve()
+    if root.is_relative_to(Path(__file__).resolve().parents[1]) or root.is_relative_to(Path.cwd().resolve()):
+        raise ClientError("凭据目录必须位于 Skill 和当前工作区之外。")
+    if any((parent / ".git").exists() for parent in (root, *root.parents)):
+        raise ClientError("凭据目录不能位于 Git 仓库内。")
+    return root / "cpris-wxapp-rest-api"
 
 
-def cmd_call(method, path, body=None, query_pairs=None):
-    creds = load_creds()
-    if not creds or not creds.get("apiKey"):
-        print("❌ 未配置：请先使用 'login <api-key>' 提供 AI 网关 API-Key。",
-              file=sys.stderr)
-        return 1
+def check_key(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ClientError("未配置 API-Key；请通过 login、安全环境变量或智能体密钥管理器提供。")
+    value = value.strip()
+    # The server imposes no 'ak-' prefix or minimum length; reject unsafe header bytes.
+    if any(ord(char) < 33 or ord(char) > 126 for char in value):
+        raise ClientError("API-Key 必须是不含空白和控制字符的可见 ASCII 字符串。")
+    return value
+
+
+def protect_windows(data, decrypt=False):
+    """DPAPI binds encrypted credentials to the current Windows user."""
+    class Blob(ctypes.Structure):
+        _fields_ = [("size", ctypes.c_uint32), ("data", ctypes.POINTER(ctypes.c_ubyte))]
+    buffer = ctypes.create_string_buffer(data)
+    source = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)))
+    result = Blob()
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    function = crypt32.CryptUnprotectData if decrypt else crypt32.CryptProtectData
+    function.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p,
+                         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(Blob)]
+    function.restype = ctypes.c_int
+    if not function(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(result)):
+        raise ClientError("Windows 用户凭据加密/解密失败；请在原用户环境操作或重新登录。")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
     try:
-        gw_path = to_gateway_path(path)
-    except ValueError as e:
-        print(f"❌ {e}", file=sys.stderr)
-        return 2
-    query = {}
-    for pair in (query_pairs or []):
-        if "=" in pair:
-            k, v = pair.split("=", 1)
-            query[k] = v
-    status, resp = _request(
-        method.upper(), gw_path, creds["apiKey"], body=body, query=query
-    )
-    if status is None:
-        print(f"⚠️  {resp}", file=sys.stderr)
-        return 1
-    if status == 401:
-        cmd_logout()
-        print("❌ API-Key 已失效（401）：t_ai_key 中查不到该 key 或 end_date 已过期，"
-              "已清除凭据。请重新获取并登录。", file=sys.stderr)
-        return 1
-    if status == 403:
-        msg = error_msg(resp, "无权访问")
-        if "路径" in msg:
-            print(f"❌ 该 API-Key 无权访问此路径（403：{msg}）：路径不在 key 的 "
-                  "allowed-paths 范围内，不要重试。请向管理员申请扩大范围。",
-                  file=sys.stderr)
+        return ctypes.string_at(result.data, result.size)
+    finally:
+        kernel32.LocalFree(ctypes.cast(result.data, ctypes.c_void_p))
+
+
+def redact_key(value, key):
+    if isinstance(value, str):
+        return value.replace(key, "[REDACTED]")
+    if isinstance(value, list):
+        return [redact_key(item, key) for item in value]
+    if isinstance(value, dict):
+        return {name.replace(key, "[REDACTED]"): redact_key(item, key) for name, item in value.items()}
+    return value
+
+
+class Client:
+    def __init__(self, args):
+        self.config = read_json(CONFIG)
+        environments = self.config["environments"]
+        chosen = args.env or os.environ.get("CPRIS_ENV")
+        override = args.gateway or os.environ.get("CPRIS_AI_GATEWAY")
+        if override:
+            override = override.rstrip("/")
+            matching = [name for name, item in environments.items() if item["aiGateway"] == override]
+            if not matching or (chosen and chosen != matching[0]):
+                raise ClientError("AI 网关必须匹配已配置的测试或正式地址，且与所选环境一致。")
+            chosen = matching[0]
+        self.environment = chosen or self.config["defaultEnvironment"]
+        if self.environment not in environments:
+            raise ClientError("CPRIS_ENV 仅支持 test 或 production。")
+        self.gateway = environments[self.environment]["aiGateway"]
+        self.path = config_root() / self.environment / "credentials.json"
+        self.timeout = args.timeout
+        self.opener = urllib.request.build_opener(NoRedirect())
+
+    def credentials(self):
+        if not self.path.exists():
+            return {}
+        value = read_json(self.path)
+        if value.get("gateway") != self.gateway or value.get("environment") != self.environment:
+            raise ClientError("凭据绑定的环境或网关不匹配，请在当前环境重新登录。")
+        if "apiKeyProtected" in value:
+            if os.name != "nt":
+                raise ClientError("Windows 加密凭据不能在其他操作系统读取，请重新登录。")
+            encrypted = base64.b64decode(value["apiKeyProtected"], validate=True)
+            value["apiKey"] = protect_windows(encrypted, decrypt=True).decode("utf-8")
+        elif os.name == "nt" and value.get("apiKey"):
+            raise ClientError("Windows 本地凭据必须使用 DPAPI 加密，请重新登录。")
+        return value
+
+    def key(self):
+        scoped = os.environ.get("CPRIS_" + self.environment.upper() + "_API_KEY")
+        if scoped:
+            return check_key(scoped), "environment"
+        generic = os.environ.get("CPRIS_API_KEY")
+        if generic:
+            if os.environ.get("CPRIS_API_KEY_GATEWAY", "").rstrip("/") != self.gateway:
+                raise ClientError("CPRIS_API_KEY 必须同时设置匹配当前网关的 CPRIS_API_KEY_GATEWAY。")
+            return check_key(generic), "environment"
+        return check_key(self.credentials().get("apiKey")), "file"
+
+    def gateway_path(self, raw, method):
+        if method not in METHODS:
+            raise ClientError("不支持该 HTTP 方法；AI 网关禁止 DELETE。")
+        if not raw or re.search(r"[\x00-\x20\x7f]", raw) or "\\" in raw:
+            raise ClientError("路径不可为空或包含空白、控制字符、反斜杠。")
+        parsed = urllib.parse.urlsplit(raw)
+        if parsed.scheme or parsed.netloc or parsed.fragment or raw.startswith("//"):
+            raise ClientError("仅接受业务相对路径或 /ai/gw 路径，不接受 URL 或片段。")
+        path = parsed.path if parsed.path.startswith("/") else "/" + parsed.path
+        if re.search(r"%(?![0-9a-fA-F]{2})", path):
+            raise ClientError("路径含无效百分号编码。")
+        decoded = urllib.parse.unquote(path, errors="strict")
+        if "%" in decoded or any(char in decoded for char in "\\;?#") or "//" in decoded:
+            raise ClientError("路径含重复编码、路径参数或非法分隔符。")
+        if re.search(r"[\x00-\x20\x7f]", decoded) or any(part in (".", "..") for part in decoded.split("/")):
+            raise ClientError("路径含控制字符或目录跳转。")
+        lower = decoded.lower()
+        if any(word in lower for word in DELETE_WORDS) or any(
+            part == "del" or part.startswith(("del-", "del_")) for part in lower.split("/")
+        ):
+            raise ClientError("AI 网关禁止删除接口，不能通过更换方法或编码绕过。")
+        if decoded == HEALTH_PATH:
+            if method != "GET":
+                raise ClientError("健康检查只接受 GET。")
+            return HEALTH_PATH + ("?" + parsed.query if parsed.query else "")
+        service, business = None, decoded
+        if decoded.startswith(PREFIX):
+            parts = decoded[len(PREFIX):].split("/", 1)
+            if len(parts) != 2 or not parts[1]:
+                raise ClientError("网关路径必须包含 service 和业务路径。")
+            service, business = parts[0], "/" + parts[1]
+        segment = business.split("/", 2)[1]
+        if segment in self.config["blockedPrefixes"] or any(
+            business == item or business.startswith(item + "/") for item in self.config["blockedPaths"]
+        ):
+            raise ClientError("登录、短信、内部换 token 和未开放的 SaaS 路径不可调用。")
+        expected = self.config["prefixToService"].get(segment)
+        if not expected or (service and service != expected):
+            raise ClientError("业务路径未配置服务映射，或完整网关路径的服务与业务前缀不匹配。")
+        encoded = urllib.parse.quote(PREFIX + expected + business, safe="/-._~")
+        return encoded + ("?" + parsed.query if parsed.query else "")
+
+    def request(self, method, path, key=None, body=None, query=None):
+        path = self.gateway_path(path, method)
+        pairs = urllib.parse.parse_qsl(urllib.parse.urlsplit(path).query, keep_blank_values=True)
+        pairs.extend(query or [])
+        forbidden = {"apikey", "xapikey", "authorization", "accesstoken", "token",
+                     "method", "methodoverride", "httpmethodoverride", "xhttpmethodoverride"}
+        if any(re.sub(r"[^a-z0-9]", "", name.lower()) in forbidden for name, _ in pairs):
+            raise ClientError("不能在查询参数中传递凭据或覆盖 HTTP 方法。")
+        if key and (key in urllib.parse.unquote(path) or any(key in name or key in value for name, value in pairs)):
+            raise ClientError("路径和查询参数不可包含 API-Key。")
+        if key and body is not None and key in body.decode("utf-8"):
+            raise ClientError("JSON 请求体不可包含 API-Key。")
+        url = self.gateway + path
+        if query:
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(query)
+        headers = {"Accept": "application/json"}
+        if key and urllib.parse.urlsplit(path).path != HEALTH_PATH:
+            headers["X-Api-Key"] = key
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            response = self.opener.open(req, timeout=self.timeout)
+        except urllib.error.HTTPError as error:
+            response = error
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise ClientError("网络请求失败或超时；凭据保留，写操作请先确认结果再决定是否重试。") from None
+        with response:
+            status = response.code
+            try:
+                content = json.loads(response.read().decode("utf-8"))
+            except (UnicodeError, ValueError):
+                content = None
+            content_type = response.headers.get_content_type()
+        # Backend error responses bypass masking; do not expose their original text or data.
+        if not 200 <= status < 300:
+            known = {
+                401: "认证失败；可能是密钥失效或下游认证失败。凭据保留，请重新登录或联系管理员。",
+                403: "路径权限、删除禁令或账号/机构登录资格限制；不要绕过或重试同一操作。",
+                404: "服务路由或接口不存在，请核对当前部署。",
+                405: "HTTP 方法不被允许；不可自行改用其他方法重试。",
+                429: "触发限流；读取请求可稍后重试，写请求不要自动重放。",
+                502: "认证服务、业务服务或脱敏处理异常。",
+                503: "AI 网关已停用或认证服务不可达。",
+            }
+            return {"ok": False, "httpStatus": status, "error": known.get(status, "网关返回非成功状态；重定向不会被跟随。")}
+        is_health = urllib.parse.urlsplit(path).path == HEALTH_PATH
+        if content is None or (not is_health and content_type != "application/json"):
+            return {"ok": False, "httpStatus": status, "error": "响应不是受支持的 JSON；未展示未经确认脱敏的内容。"}
+        code = content.get("code") if isinstance(content, dict) else None
+        if code is not None and str(code) != "200":
+            safe_code = code if isinstance(code, int) or (isinstance(code, str) and code.isdigit() and len(code) <= 6) else None
+            return {"ok": False, "httpStatus": status, "businessCode": safe_code, "error": "业务返回失败；HTTP 成功不代表业务成功。"}
+        if key:
+            content = redact_key(content, key)
+        return {"ok": True, "httpStatus": status, "data": content}
+
+    def save(self, key):
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        value = {"environment": self.environment, "gateway": self.gateway,
+                 "validatedAt": datetime.now(timezone.utc).isoformat()}
+        if os.name == "nt":
+            value["apiKeyProtected"] = base64.b64encode(protect_windows(key.encode("utf-8"))).decode("ascii")
         else:
-            print(f"❌ 该 API-Key 无法换取登录 token（403：{msg}）：可能未绑定机构/用户、"
-                  "绑定账号已禁用或机构已过期。凭据保留，请联系管理员处理。",
-                  file=sys.stderr)
-        print(resp)
-        return 1
-    if status == 405:
-        print(f"❌ 该 API-Key 不允许使用 {method.upper()} 方法（405）。",
-              file=sys.stderr)
-        print(resp)
-        return 1
-    if status == 429:
-        print("❌ 请求过于频繁（429）：已触发限流，请等待约 60 秒后重试。",
-              file=sys.stderr)
-        return 1
-    if status == 502:
-        print("❌ 认证服务返回异常、下游服务不可达或脱敏处理失败（502）。请稍后重试；"
-              "禁止绕过网关直连业务服务。", file=sys.stderr)
-        print(resp)
-        return 1
-    if status == 503:
-        print("❌ AI 网关已停用，或认证服务（auth）不可达（503）。凭据保留，"
-              "请联系管理员。", file=sys.stderr)
-        return 1
-    print(f"HTTP {status}")
-    print(resp)
-    return 0 if 200 <= status < 300 else 1
+            os.chmod(self.path.parent, 0o700)
+            value["apiKey"] = key
+        temporary = None
+        try:
+            fd, temporary = tempfile.mkstemp(dir=self.path.parent, prefix=".credentials-")
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(value, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+            os.replace(temporary, self.path)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def emit(result):
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["ok"] else 1
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CPRIS AI 网关认证与调用辅助")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p_login = sub.add_parser("login", help="验证并保存 AI 网关 API-Key")
-    p_login.add_argument("api_key",
-                         help="AI 网关 API-Key（登记在 t_ai_key，通常以 ak- 开头）")
-
-    sub.add_parser("status", help="查看当前配置状态")
-    sub.add_parser("logout", help="清除已保存的 API-Key")
-
-    p_call = sub.add_parser("call", help="通过 AI 网关调用接口")
-    p_call.add_argument("method", help="HTTP 方法，如 GET/POST")
-    p_call.add_argument("path", help="业务路径（如 /user/info）或完整网关路径"
-                                     "（如 /ai/gw/user/user/info）")
-    p_call.add_argument("--body", help="JSON 请求体字符串", default=None)
-    p_call.add_argument("--query", nargs="*", help="查询参数 k=v", default=None)
-
+    parser = argparse.ArgumentParser(description="CPRIS AI 网关客户端（默认测试环境）")
+    parser.add_argument("--env", choices=("test", "production"))
+    parser.add_argument("--gateway", help="已配置的 AI 网关地址；兼容 CPRIS_AI_GATEWAY")
+    parser.add_argument("--timeout", type=float, default=30)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("health", help="无需密钥的健康检查")
+    sub.add_parser("status", help="查看当前环境配置，不请求网络")
+    sub.add_parser("logout", help="清除当前环境的本地凭据")
+    login = sub.add_parser("login", help="通过 /user/info 验证密钥")
+    login.add_argument("--key-stdin", action="store_true", help="从标准输入读取密钥")
+    login.add_argument("--no-save", action="store_true", help="只验证，不持久化")
+    call = sub.add_parser("call", help="通过 AI 网关调用 JSON 接口")
+    call.add_argument("method", type=str.upper, choices=METHODS)
+    call.add_argument("path")
+    bodies = call.add_mutually_exclusive_group()
+    bodies.add_argument("--body", help="JSON 请求体")
+    bodies.add_argument("--body-file", type=Path, help="UTF-8 JSON 请求文件")
+    call.add_argument("--query", nargs="*", default=[], help="查询参数 key=value，支持重复键")
     args = parser.parse_args()
-    if args.cmd == "login":
-        return cmd_login(args.api_key)
-    if args.cmd == "status":
-        return cmd_status()
-    if args.cmd == "logout":
-        return cmd_logout()
-    if args.cmd == "call":
-        return cmd_call(args.method, args.path, args.body, args.query)
-    return 2
+    if not 0 < args.timeout <= 300:
+        raise ClientError("timeout 必须在 0 到 300 秒之间。")
+    client = Client(args)
+    if args.command == "health":
+        return emit(client.request("GET", HEALTH_PATH))
+    if args.command == "status":
+        try:
+            _, source = client.key()
+        except ClientError as error:
+            return emit({"ok": False, "environment": client.environment, "gateway": client.gateway, "error": str(error)})
+        return emit({"ok": True, "environment": client.environment, "gateway": client.gateway,
+                     "credentialSource": source, "message": "本地状态不代表当前密钥有效性。"})
+    if args.command == "logout":
+        client.path.unlink(missing_ok=True)
+        return emit({"ok": True, "environment": client.environment,
+                     "message": "已清除当前环境的本地凭据；环境变量请在调用进程或密钥管理器中清除。"})
+    if args.command == "login":
+        if args.key_stdin:
+            key = check_key(sys.stdin.readline().rstrip("\r\n"))
+        elif any(os.environ.get(name) for name in ("CPRIS_API_KEY", "CPRIS_" + client.environment.upper() + "_API_KEY")):
+            key, _ = client.key()
+        elif sys.stdin.isatty():
+            key = check_key(getpass.getpass("CPRIS API-Key: "))
+        else:
+            raise ClientError("非交互环境请使用密钥环境变量或 --key-stdin。")
+        result = client.request("GET", HEALTH_PATH)
+        if not result["ok"]:
+            return emit(result)
+        result = client.request("GET", VERIFY_PATH, key)
+        data = result.get("data")
+        if result["ok"] and not (isinstance(data, dict) and str(data.get("code")) == "200" and isinstance(data.get("data"), dict) and data["data"]):
+            result = {"ok": False, "error": "验证接口未返回预期的用户信息，未保存密钥。"}
+        if not result["ok"]:
+            return emit(result)
+        if not args.no_save:
+            client.save(key)
+        return emit({"ok": True, "environment": client.environment, "saved": not args.no_save,
+                     "message": "用户信息接口验证成功。"})
+    path = client.gateway_path(args.path, args.method)
+    body = args.body_file.read_text(encoding="utf-8-sig") if args.body_file else args.body
+    if body is not None:
+        if args.method not in ("POST", "PUT", "PATCH"):
+            raise ClientError("该方法不接受 JSON 请求体。")
+        body = json.dumps(json.loads(body), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    query = []
+    for pair in args.query:
+        if "=" not in pair or not pair.split("=", 1)[0]:
+            raise ClientError("查询参数必须使用非空 key=value 格式。")
+        query.append(tuple(pair.split("=", 1)))
+    key = None if urllib.parse.urlsplit(path).path == HEALTH_PATH else client.key()[0]
+    return emit(client.request(args.method, path, key, body, query))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ClientError as error:
+        emit({"ok": False, "error": str(error)})
+        sys.exit(2)
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+        emit({"ok": False, "error": "配置、输入或文件操作失败；未输出可能含敏感数据的异常原文。"})
+        sys.exit(2)

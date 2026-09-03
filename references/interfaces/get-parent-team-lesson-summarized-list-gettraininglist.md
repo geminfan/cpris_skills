@@ -4,7 +4,7 @@
 
 - 模块：`parent`
 - Controller：`ParentTeamController`
-- 源码：`C:\work\javacode\cpris_wxapp\parent\src\main\java\com\cpris\controller\ParentTeamController.java:68`
+- 源码：`cpris_wxapp/parent/src/main/java/com/cpris/controller/ParentTeamController.java:68`
 - Java 方法：`getTrainingList`
 
 ## 功能
@@ -19,10 +19,8 @@
 
 ### 参数
 
-- 请求参数：`(value = "查询日期（yyyy-MM）"`
-- Query 参数：`example = "2025-11") String date`
-- 请求参数：`(value = "儿童id"`
-- Query 参数：`example = "儿童id") String childId`
+- Query/表单：`@ApiParam(value = "查询日期（yyyy-MM）", example = "2025-11") @RequestParam String date`
+- Query/表单：`@ApiParam(value = "儿童id", example = "儿童id") @RequestParam String childId`
 
 ## 响应
 
@@ -35,5 +33,7 @@
 
 ## 使用与安全提示
 
-- 认证、租户与数据权限通常由网关、拦截器或服务层承担；调用前应结合部署配置核实。
-- 本文档根据静态源码生成；路径前缀（网关 context-path）和运行时权限策略未在 Controller 注解中展开。
+- AI 调用：经 AI 网关调用，受用户授权与运行时权限约束。
+- 实际请求必须使用 AI 网关及 X-Api-Key；完整路径也不能绕过禁令，见 [网关契约](../gateway-contract.md)。
+- 参数按完整 Java 参数分组并保留注解；DTO 字段与绑定规则见 [请求与响应约定](../schemas.md)。
+- 源码路径相对于 cpris_wxapp 所在目录；行号与调用链为静态快照，收录不代表当前部署已开放。
