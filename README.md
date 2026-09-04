@@ -4,13 +4,13 @@ cpris_wxapp 对应的通用 AI 技能，入口为仓库根目录 [SKILL.md](SKIL
 
 ## 接入
 
-将本目录完整复制或挂载到智能体支持的技能目录，安装目录命名为 cpris-wxapp-rest-api，保留 scripts、references 和可选 agents 元数据。技能发现方式由各智能体运行器决定。
+将本目录完整复制或挂载到智能体支持的技能目录，安装目录命名为 cpris-skills，保留 scripts、references 和可选 agents 元数据。技能发现方式由各智能体运行器决定。
 
 不支持自动发现 SKILL.md 的智能体，可以读取入口作为工具使用说明，通过其终端工具执行 scripts/cpris_auth.py。只有 HTTP 工具的智能体按 [网关契约](references/gateway-contract.md) 请求相同接口；本仓库不是 MCP 服务。
 
 ~~~text
-使用 cpris-wxapp-rest-api 查询儿童列表，默认测试环境。
-使用 cpris-wxapp-rest-api 解释 /training/list 的参数，不调用接口。
+使用 cpris-skills 查询儿童列表，默认测试环境。
+使用 cpris-skills 解释 /training/list 的参数，不调用接口。
 ~~~
 
 ## 环境与使用

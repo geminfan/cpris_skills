@@ -1,4 +1,4 @@
 interface:
   display_name: "希普在线智能体"
   short_description: "通过 CPRIS AI 网关查询及调用业务接口，支持测试与正式环境隔离和密钥认证"
-  default_prompt: "使用 $cpris-wxapp-rest-api 查询所需 CPRIS 接口，并在用户授权范围内通过默认测试 AI 网关调用。"
+  default_prompt: "使用 $cpris-skills 查询所需 CPRIS 接口，并在用户授权范围内通过默认测试 AI 网关调用。"

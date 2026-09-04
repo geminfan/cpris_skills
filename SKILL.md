@@ -1,5 +1,5 @@
 ---
-name: cpris-wxapp-rest-api
+name: cpris-skills
 description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，并通过 CPRIS AI 网关执行获授权的儿童、用户、家长、训练和评估业务操作。支持测试与正式环境、API-Key 认证；不提供删除、登录短信或内部换 token 操作。
 ---
 
@@ -10,10 +10,11 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 ## 工作方式
 
 1. 区分接口查询与实际业务操作。仅查文档、解释参数时不读取密钥、不要求登录、不发网络请求。
-2. 从 [接口总览](references/api-overview.md) 进入相关模块和接口详情，核对方法、路径、参数与调用资格。索引包含不可调用的历史接口，收录不等于开放。
-3. 实际请求前读取 [运行时配置](references/runtime-configuration.md)。默认测试环境；正式环境必须由用户或运行配置明确选择，不能因测试失败而切换正式环境。
-4. 使用 scripts/cpris_auth.py，或按 [网关契约](references/gateway-contract.md) 执行等价 HTTP 请求。路径为 /ai/gw/{service}/{业务路径}，仅使用 X-Api-Key 认证，不直连业务网关、不自行获取 JWT。
-5. 根据 [请求与响应约定](references/schemas.md) 检查 HTTP 状态和业务 code。仅交付成功响应中的数据；儿童、教师姓名按返回原文直接显示，不做额外脱敏，不猜测被遮盖内容。
+2. 优先在 `references/interfaces/` 按 HTTP 路径或业务关键词搜索并只读取命中的接口详情；路径不明确时才读取 [接口总览](references/api-overview.md) 和对应模块索引。不要遍历或加载全部接口文档。
+3. 已知方法、路径和参数后直接调用，不为常规调用预先执行 `status`、`health` 或 `login`。仅在缺少凭据时处理登录，连接异常时才用 `health` 区分网关状态，401 时才重新验证密钥。
+4. 默认测试环境；只有用户或现有运行配置明确选择 production 时才传 `--env production`。环境、凭据或部署细节存在疑问时再读取 [运行时配置](references/runtime-configuration.md)，不能因测试失败而切换正式环境。
+5. 使用 `scripts/cpris_auth.py call`，或按 [网关契约](references/gateway-contract.md) 执行等价请求。脚本已经执行环境、路由、删除禁令、HTTP 状态和业务 code 检查；只有解释这些规则、处理特殊响应或缺少 Python 时才读取网关契约和 [请求与响应约定](references/schemas.md)。
+6. 仅交付成功响应中的数据；儿童、教师姓名按返回原文直接显示，不做额外脱敏，不猜测被遮盖内容。
 
 ## 环境
 
@@ -39,7 +40,7 @@ python scripts/cpris_auth.py --env production login
 python scripts/cpris_auth.py --env production call GET /user/info
 ~~~
 
-login 隐藏输入密钥；无交互智能体优先由密钥管理器注入 CPRIS_TEST_API_KEY 或 CPRIS_PRODUCTION_API_KEY，也可使用 login --key-stdin。不要把密钥写在命令参数、脚本或对话回复里。仅验证时加 --no-save；环境密钥可直接用于 call，不要求先持久化。
+`call` 是已有凭据时的快速路径。login 隐藏输入密钥；无交互智能体优先由密钥管理器注入 CPRIS_TEST_API_KEY 或 CPRIS_PRODUCTION_API_KEY，也可使用 login --key-stdin。不要把密钥写在命令参数、脚本或对话回复里。仅验证时加 --no-save；环境密钥可直接用于 call，不要求先持久化。
 
 ## 操作边界
 
