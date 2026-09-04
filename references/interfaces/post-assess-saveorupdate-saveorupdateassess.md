@@ -20,6 +20,9 @@
 ### 参数
 
 - JSON 请求体：`@RequestBody VSmdAssess assess`
+- 新建评估至少应包含 `childId`、`assessDefineId`、`assessProgress`、`assessDate`、`assessAppointDate`、`realAssessPerson`、`employeeId` 和 `assessType`。
+- `assessDate` 和 `assessAppointDate` 使用 `yyyy-MM-dd HH:mm:ss`；评估老师账号同时写入 `realAssessPerson` 和 `employeeId`。`dgCreatedDate`、`dgCreatedBy` 是审计字段，不能替代上述业务字段。
+- 能力评估（包括 C-PEP-3）使用 `assessType: "1"`。若原系统流程要求 `scheduleDefineId`，还必须先建立有效的排期关联，不能填入虚构 ID。
 
 ## 响应
 

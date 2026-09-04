@@ -1,4 +1,4 @@
 interface:
   display_name: "希普在线智能体"
-  short_description: "通过 CPRIS AI 网关查询及调用业务接口，支持测试与正式环境隔离和密钥认证"
-  default_prompt: "使用 $cpris-skills 查询所需 CPRIS 接口，并在用户授权范围内通过默认测试 AI 网关调用。"
+  short_description: "通过 CPRIS AI 网关查询业务，并导入扫描件中的纸质评估结果"
+  default_prompt: "使用 $cpris-skills 查询或调用 CPRIS 业务；如有纸质评估扫描 PDF 或图片，识别后导入对应儿童的已有评估。"
