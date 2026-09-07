@@ -1,0 +1,68 @@
+# 已知问题与规避（新条目按时间顺序追加到文件末尾）
+
+调用 CPRIS 出现失败、报错或环境异常时，先查本文件是否已有规避方案；新问题解决后把「日期 / 环境 / 现象 / 原因 / 规避」追加到文件末尾，供其他智能体复用，减少重复踩坑和调用耗时。
+
+## 2026-09-07 · 本机无 Python，PowerShell 等价调用
+
+- **现象**：`python scripts/cpris_auth.py ...` 直接退出，exit code 49、无任何输出；`python --version` 同样异常。PATH 中只有 Microsoft Store 的 `python.exe`/`python3.exe` 占位存根（WindowsApps），`py` 启动器不存在。
+- **原因**：该 Windows 机器未安装真实 Python。
+- **规避**：
+  - 用 `scripts/cpris_call.ps1`（本仓库提供的 PowerShell 备用客户端，功能对齐 cpris_auth.py 的常用调用），或按下述模板手工执行等价 HTTP 请求。
+  - 长期方案：`winget install Python.Python.3.12` 后可直接用原脚本。
+- **已验证可行的 PowerShell 等价流程**：
+  1. 凭据解密：读 `%APPDATA%\cpris\cpris-wxapp-rest-api\<env>\credentials.json`，`apiKeyProtected` 为 base64，用 `[System.Security.Cryptography.ProtectedData]::Unprotect(bytes, $null, CurrentUser)` 解出 API-Key（DPAPI 绑定当前用户）。
+  2. 请求：`[System.Net.HttpWebRequest]`，`AllowAutoRedirect = $false`、`Accept: application/json`、头 `X-Api-Key`；POST 时 `ContentType: application/json`、正文 UTF-8 字节。
+  3. 路由：业务路径按 `references/gateway-config.json` 的 `prefixToService` 映射，如 `/childrenInfo/page` → `<网关>/ai/gw/children/childrenInfo/page`；user 模块为 `/ai/gw/user/...`。
+
+## 2026-09-07 · PowerShell 脚本含中文导致解析错误
+
+- **现象**：UTF-8 无 BOM 的 `.ps1` 内含中文字符串时，报「表达式或语句中包含意外的标记」等解析错误，中文显示成乱码（如 `鐢?`）。
+- **原因**：Windows PowerShell 5.1 按 ANSI（GBK）读取无 BOM 的脚本文件。
+- **规避**：`.ps1` 保持纯 ASCII（注释用英文）；中文字符串放独立 UTF-8 文件，用 `Get-Content -Encoding UTF8` 读入；向命令行传中文参数同样有编码风险，中文查询值/JSON 正文走文件。
+
+## 2026-09-07 · saveOrUpdate 整体回传实体导致 500 或污染数据
+
+- **现象**：想给儿童改名，先 `GET /childrenInfo/info` 取完整实体，改 name 后原样 `POST /childrenInfo/saveOrUpdate`，返回 HTTP 500 `{"code":500,"msg":null}`。
+- **原因**：详情接口返回的是带关联数据的只读拼装结果，不能直接回写：
+  - `childrenVisitList` 为 `[null]` 占位（无随访记录时），回传触发服务端空指针；
+  - `childrenGuardianList[].phone` 是脱敏值（如 `152****6412`），回写会用掩码覆盖真实手机号；
+  - `dgUpdatedBy/dgCreatedDate/etlUpdatedDate` 等审计字段由服务端管理。
+- **规避**：字段更新（改名等）只发**最小请求体**：`{"childId":"...","name":"新名字"}`，其余字段为 null 时按非空更新策略不被覆盖。实测返回 `{"msg":"保存成功","code":200}`。
+- **附**：500 失败时事务未生效，数据无变化；但不要依赖这一点，写操作前先确认请求体构造正确。
+
+## 2026-09-07 · 儿童列表全量翻页慢
+
+- **现象**：查"我的儿童"共 91 条，默认每页 10 条，需 10 次调用才能取全，输出大（>50KB）还会被截断落盘。
+- **规避**：
+  - 找特定儿童时用 `GET /childrenInfo/page?name=<姓名>` 过滤，一次命中，不必翻页；
+  - 确需全量时按 `total/pages` 字段循环取页，只解析 `data.records[]` 的 `name/sex/birthday/statusName/childId`；
+  - 本机密钥已保存在测试环境凭据文件中（见运行时配置），调用前不需要 login/health。
+
+## 2026-09-07 · 新建儿童缺接待日期（jdrq）
+
+- **现象**：儿童"测试ai新建档案2"（2026-09-04 由 geminfan 创建）没有接待日期；`GET /childrenInfo/info` 返回 `"childrenVisitList":[null]`，即无任何接待记录。
+- **原因**：接待日期是接待记录表 `t_children_visit` 的 `jdrq` 字段（实体 `TChildrenVisit`，ApiModel 注释"儿童接待记录实体"），按 childId 关联儿童。服务端 `TChildrenInfoServiceImpl.saveOrUpdateAndVisitAndRp` **只在请求体 childrenVisitList 非空时**才插入接待记录；该儿童创建时请求体没带，因此 t_children_visit 无记录、无接待日期。
+- **规避（规则）**：新建儿童（`POST /childrenInfo/saveOrUpdate`，无 childId 即新建）必须携带接待日期：
+  ```json
+  { "name": "...", "sex": "...", "birthday": "...", "childrenVisitList": [ { "jdrq": "<接待日期>" } ] }
+  ```
+  用户未指定接待日期时默认**当前时间**。`jdrq` 为 java.util.Date，JSON 传 ISO-8601 字符串（如 `2026-09-07T15:30:00`）或毫秒时间戳；visitId/childId/rpId 由服务端生成，无需传。
+- **源码确认的 saveOrUpdateAndVisitAndRp 行为**（更新前必读）：
+  - 更新已有儿童时传 `childrenVisitList` 会**先删除该儿童全部接待记录再逐条插入**——要传就传完整列表，绝不能传 `[null]` 或残缺数据；`[null]` 在 `visit.setChildId` 处空指针，正是"整体回传实体返回 500"的根因；
+  - `childrenGuardianList` 同样先删后插；
+  - 新建时服务端固定 `status="2"`（已登记）；
+  - 更新走 `updateById`，null 字段不覆盖，所以最小请求体（childId+变更字段）改名安全。
+
+## 2026-09-07 · Git Bash 调 PowerShell 时业务路径被改写
+
+- **现象**：在 Git Bash 中执行 `powershell ... -File cpris_call.ps1 -Method POST -Path /childrenInfo/visit/saveOrUpdate ...`，脚本报"path contains whitespace, backslash, bad escape or duplicate slash"。
+- **原因**：MSYS2/Git Bash 会把以 `/` 开头的参数自动转换成 Windows 路径（`/childrenInfo/...` → `C:/Program Files/Git/childrenInfo/...`），传给 powershell.exe 的业务路径被改写。
+- **规避**：命令前加 `MSYS_NO_PATHCONV=1`，或用双引号包住并由脚本内部处理；凡从 Git Bash 向 Windows 程序传 `/` 开头参数都要注意。
+
+## 2026-09-07 · 给已有儿童补录接待日期（已验证方案）
+
+- **场景**：儿童已存在但创建时没带接待记录，需补接待日期。
+- **已验证**：`POST /childrenInfo/visit/saveOrUpdate`，请求体 `{"childId":"<id>","jdrq":<毫秒时间戳>}`（无 visitId 即插入；jdrq 用毫秒时间戳最稳，避免时区/格式歧义），返回 `{"msg":"保存成功","code":200}`。
+- **依据源码**：TChildrenVisitServiceImpl 是纯 MyBatis-Plus saveOrUpdate，visitId 为空走插入（UUID 自动生成、审计字段自动填充）；查询 SQL `getChildrenVisit` 按 `child_id` 过滤、不关联 rpId，补录后 `GET /childrenInfo/info` 能正常查出。走该接口 rpId 为空不影响展示；若业务需要 rpId 关联，改用主接口 `/childrenInfo/saveOrUpdate` 携带完整 childrenVisitList（先删后插）。
+
+

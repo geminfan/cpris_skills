@@ -15,6 +15,7 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 4. 默认测试环境；只有用户或现有运行配置明确选择 production 时才传 `--env production`。环境、凭据或部署细节存在疑问时再读取 [运行时配置](references/runtime-configuration.md)，不能因测试失败而切换正式环境。
 5. 使用 `scripts/cpris_auth.py call`，或按 [网关契约](references/gateway-contract.md) 执行等价请求。脚本已经执行环境、路由、删除禁令、HTTP 状态和业务 code 检查；只有解释这些规则、处理特殊响应或缺少 Python 时才读取网关契约和 [请求与响应约定](references/schemas.md)。
 6. 仅交付成功响应中的数据；儿童、教师姓名按返回原文直接显示，不做额外脱敏，不猜测被遮盖内容。
+7. 调用失败、网关报错或环境异常（例如机器没有 Python）时，先读取 [已知问题与规避](references/known-issues.md) 按既有方案处理，减少重复排查和调用耗时；新问题解决后把「日期、现象、原因、规避」追加到该文件末尾，避免其他智能体重复踩坑。Windows 无 Python 时用 `scripts/cpris_call.ps1` 执行等价调用。
 
 ## 纸质评估导入
 
@@ -46,10 +47,19 @@ python scripts/cpris_auth.py --env production call GET /user/info
 
 `call` 是已有凭据时的快速路径。login 隐藏输入密钥；无交互智能体优先由密钥管理器注入 CPRIS_TEST_API_KEY 或 CPRIS_PRODUCTION_API_KEY，也可使用 login --key-stdin。不要把密钥写在命令参数、脚本或对话回复里。仅验证时加 --no-save；环境密钥可直接用于 call，不要求先持久化。
 
+无 Python 的 Windows 机器可用 PowerShell 等价客户端 `scripts/cpris_call.ps1`：
+
+~~~bash
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cpris_call.ps1 -Method GET -Path /childrenInfo/page -Query current=1
+~~~
+
+密钥同样从凭据文件或环境变量读取；中文查询值用 `-QueryFile`（UTF-8 文本，每行 key=value），中文 JSON 正文用 `-BodyFile`（UTF-8 文件），不要把中文放进命令行参数。输出首行为 `HTTP_STATUS:<code>`，其后为响应原文。
+
 ## 操作边界
 
 - 仅执行用户已经授权的操作。创建、更新、保存、绑定等按实际副作用判断，不能仅根据 GET/POST 判断只读。现有明确授权已覆盖的操作无需重复确认。
 - 新建或更新评估时，不能只提交 `childId`、`assessDefineId` 和审计字段。必须按原系统业务记录同时写入 `assessDate`、`assessAppointDate`、`realAssessPerson`、`employeeId` 和 `assessType`；`dgCreatedDate`、`dgCreatedBy` 仅是审计字段，不能替代评估时间或评估老师。C-PEP-3 等能力评估使用 `assessType: "1"`，评估老师账号应同时填入 `realAssessPerson` 和 `employeeId`。
+- 新建儿童（`POST /childrenInfo/saveOrUpdate`，无 childId 即新建）时必须携带接待日期：请求体包含 `childrenVisitList: [{"jdrq": "<接待日期>"}]`，用户未指定时默认当前时间（ISO-8601 字符串或毫秒时间戳）。服务端只在 childrenVisitList 非空时写入 `t_children_visit`，不带则儿童没有接待记录和接待日期。更新已有儿童的 `childrenVisitList`/`childrenGuardianList` 是先删后插，必须传完整列表，禁止传 `[null]` 或残缺数据。
 - 网关禁止 DELETE 和删除路径，包括 POST /assess/delete 等。不得换方法、借用路由、编码或直连业务服务绕过。
 - 登录、短信、SaaS 数据/文件与 /ai/key/token 不在技能调用范围，完整网关路径也必须检查真实业务路径。
 - 不自动重试写操作；超时不代表服务端未完成，不通过改用其他 HTTP 方法规避 405。
@@ -64,3 +74,4 @@ python scripts/cpris_auth.py --env production call GET /user/info
 - [参数绑定与请求响应](references/schemas.md)
 - [模块与接口目录](references/api-overview.md)
 - [扫描 PDF 或图片中的纸质评估结果并导入](references/assessment-form-import.md)
+- [历史踩坑与规避方案](references/known-issues.md)
