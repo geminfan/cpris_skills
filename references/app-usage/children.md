@@ -40,7 +40,7 @@ Controller：`ChildrenInfoController.java`（cpris_wxapp/children）。前端函
 |---|---|---|---|---|
 | childId | query | string | **是** | 儿童 id |
 
-- 响应 `data`：TChildrenInfo + `childrenVisitList`（1 条，含 `jdzName` 接待者姓名；无记录时为 `[null]`）+ `childrenGuardianList`（1 条，`phone` 为脱敏值）。
+- 响应 `data`：TChildrenInfo + `childrenVisitList`（1 条，含 `jdzName` 接待者姓名；无记录时为 `[null]`）+ `childrenGuardianList`（1 条，`phone` 是否脱敏以当前账号权限和实际返回为准）。
 - 后端限制：返回的是只读拼装结果，**不能整体回传给 saveOrUpdate**（见坑清单第 2 条）。
 
 ### GET /childrenInfo/common/info — 儿童常用信息
@@ -127,7 +127,7 @@ TChildrenInfo 完整字段（更新可写字段，null 不覆盖）：
 
 TChildrenVisit（接待记录）关键字段：`visitId`（主键，服务端生成）、`zdmc` 诊断名称（取 bzfl 字典 text）、`jdz` 接待者 employeeId、`jdrq` 接待日期、`jddx/sfxdet/gcjl/clzt/kfzz/ghbz/qtzz/fzxm/jy/cl` 等观察字段、`rpId`、`childId`、返回时附 `jdzName`。
 
-TChildrenGuardian（监护人）关键字段：`guardianId`（主键）、`childId`、`name`、`relation`（父亲/母亲/监护人）、`phone`、`qq`、`weixin`、`degree`、`job`、`ageRange`、`email`、`birthday`、`displayOrder`。查询返回的 phone 是脱敏值，回写前必须改为真实号码（或不动）。
+TChildrenGuardian（监护人）关键字段：`guardianId`（主键）、`childId`、`name`、`relation`（父亲/母亲/监护人）、`phone`、`qq`、`weixin`、`degree`、`job`、`ageRange`、`email`、`birthday`、`displayOrder`。查询返回的 phone 是否脱敏以当前账号的 ai_show_child_phone 权限和实际返回为准；若返回掩码，不得将其回写或猜测还原。仅更新获授权的字段；必须提交完整监护人列表却缺少真实号码时，请用户补充，不能用掩码覆盖原值。
 
 ### POST /childrenInfo/enterTraining — 儿童入训
 - 前端：`childApi.childrenInfoEnterTraining`（invalidChild.vue 入训保存）

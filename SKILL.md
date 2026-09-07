@@ -14,7 +14,7 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 3. 已知方法、路径和参数后直接调用，不为常规调用预先执行 `status`、`health` 或 `login`。仅在缺少凭据时处理登录，连接异常时才用 `health` 区分网关状态，401 时才重新验证密钥。
 4. 默认测试环境；只有用户或现有运行配置明确选择 production 时才传 `--env production`。环境、凭据或部署细节存在疑问时再读取 [运行时配置](references/runtime-configuration.md)，不能因测试失败而切换正式环境。
 5. 使用 `scripts/cpris_auth.py call`，或按 [网关契约](references/gateway-contract.md) 执行等价请求。脚本已经执行环境、路由、删除禁令、HTTP 状态和业务 code 检查；只有解释这些规则、处理特殊响应或缺少 Python 时才读取网关契约和 [请求与响应约定](references/schemas.md)。
-6. 仅交付成功响应中的数据；儿童、教师姓名按返回原文直接显示，不做额外脱敏，不猜测被遮盖内容。
+6. 仅交付成功响应中的数据，按网关返回值展示。网关根据 API-Key 绑定账号的 ai_show 权限逐项决定是否脱敏；已授权返回的原文不额外遮盖，已遮盖内容不猜测或还原。
 7. 调用失败、网关报错或环境异常（例如机器没有 Python）时，先读取 [已知问题与规避](references/known-issues.md) 按既有方案处理，减少重复排查和调用耗时；新问题解决后把「日期、现象、原因、规避」追加到该文件末尾，避免其他智能体重复踩坑。Windows 无 Python 时用 `scripts/cpris_call.ps1` 执行等价调用。
 
 ## 纸质评估导入
@@ -53,7 +53,7 @@ python scripts/cpris_auth.py --env production call GET /user/info
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cpris_call.ps1 -Method GET -Path /childrenInfo/page -Query current=1
 ~~~
 
-密钥同样从凭据文件或环境变量读取；中文查询值用 `-QueryFile`（UTF-8 文本，每行 key=value），中文 JSON 正文用 `-BodyFile`（UTF-8 文件），不要把中文放进命令行参数。输出首行为 `HTTP_STATUS:<code>`，其后为响应原文。
+密钥同样从凭据文件或环境变量读取；中文查询值用 `-QueryFile`（UTF-8 文本，每行 key=value），中文 JSON 正文用 `-BodyFile`（UTF-8 文件），不要把中文放进命令行参数。输出首行为 `HTTP_STATUS:<code>`，其后为响应原文；智能体须确认 HTTP 2xx、响应为 JSON 且存在的业务 code=200 后才交付数据，不展示错误或非 JSON 原文。成功数据按网关返回值展示，不另做脱敏。
 
 ## 操作边界
 
@@ -61,10 +61,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cpris_call.ps1 -Meth
 - 新建或更新评估时，不能只提交 `childId`、`assessDefineId` 和审计字段。必须同时提交 `assessDate`、`assessAppointDate`、`employeeId` 和 `assessType`（服务端按显式白名单落库，`assessAppointDate` 会被置为 `assessDate`，修改时也不能更换 childId）；`realAssessPerson` 不经该接口写入，由完成/生成类操作自动记录当前用户。`dgCreatedDate`、`dgCreatedBy` 仅是审计字段，不能替代评估时间或评估老师。C-PEP-3 等能力评估使用 `assessType: "1"`，评估老师账号填入 `employeeId`。字段级细节见 [评估模块手册](references/app-usage/assess.md)。
 - 新建儿童（`POST /childrenInfo/saveOrUpdate`，无 childId 即新建）时必须携带接待日期：请求体包含 `childrenVisitList: [{"jdrq": "<接待日期>"}]`，用户未指定时默认当前时间（ISO-8601 字符串或毫秒时间戳）。服务端只在 childrenVisitList 非空时写入 `t_children_visit`，不带则儿童没有接待记录和接待日期。更新已有儿童的 `childrenVisitList`/`childrenGuardianList` 是先删后插，必须传完整列表，禁止传 `[null]` 或残缺数据。
 - 网关禁止 DELETE 和删除路径，包括 POST /assess/delete 等。不得换方法、借用路由、编码或直连业务服务绕过。
-- 登录、短信、SaaS 数据/文件与 /ai/key/token 不在技能调用范围，完整网关路径也必须检查真实业务路径。
+- 登录、短信、SaaS 数据/文件及内部 /ai/key/token、/ai/permissions 不在技能调用范围，完整网关路径也必须检查真实业务路径。token 获取和权限查询由网关处理，技能只携带 X-Api-Key 调用业务接口。
 - 不自动重试写操作；超时不代表服务端未完成，不通过改用其他 HTTP 方法规避 405。
 - health 不证明密钥有效；403、405、429 可能发生在 auth 验证之前，不能据此宣布登录成功。
-- 儿童姓名（含昵称、曾用名及对应拼音）和教师姓名（含对应拼音）按成功响应原文直接显示，不做额外脱敏；姓名字段中的手机号、证件号和邮箱仍执行内容脱敏，其他敏感字段保持脱敏形态。若后端已遮盖姓名，不猜测或还原。当前后端部分错误和非 JSON 响应直接透传，脚本不输出这类原文；不能宣称所有响应均保证脱敏。
+- 教师姓名、身份证、手机号、邮箱、地址，以及儿童姓名、身份证、联系方式、家庭住址，分别受 ai_skill_manage 下对应 ai_show 权限控制，权限对照见 [网关契约](references/gateway-contract.md)。无对应权限或权限查询失败时，网关保持对应字段脱敏。技能不自行推断、授予或缓存显示权限，也不把已脱敏响应判为调用失败或尝试绕过网关获取原文。错误和非 JSON 响应仍不展示原文；不能宣称所有响应均保证脱敏。
 - 接口详情源码位置以 cpris_wxapp/ 开头；只有需要追踪且环境有源码时才读取。缺少源码时说明资料边界，不要求使用者安装后端工程。
 
 ## 按需参考

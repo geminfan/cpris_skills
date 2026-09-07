@@ -226,7 +226,7 @@ class Client:
             except (UnicodeError, ValueError):
                 content = None
             content_type = response.headers.get_content_type()
-        # Backend error responses bypass masking; do not expose their original text or data.
+        # Only successful business JSON is delivered; keep raw error text and data private.
         if not 200 <= status < 300:
             known = {
                 401: "认证失败；可能是密钥失效或下游认证失败。凭据保留，请重新登录或联系管理员。",
