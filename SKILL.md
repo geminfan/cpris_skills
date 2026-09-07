@@ -10,7 +10,7 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 ## 工作方式
 
 1. 区分接口查询与实际业务操作。仅查文档、解释参数时不读取密钥、不要求登录、不发网络请求。
-2. 优先在 `references/interfaces/` 按 HTTP 路径或业务关键词搜索并只读取命中的接口详情；路径不明确时才读取 [接口总览](references/api-overview.md) 和对应模块索引。不要遍历或加载全部接口文档。
+2. 优先在 `references/interfaces/` 按 HTTP 路径或业务关键词搜索并只读取命中的接口详情；路径不明确时才读取 [接口总览](references/api-overview.md) 和对应模块索引。不要遍历或加载全部接口文档。需要确定请求字段、必填规则、日期格式或构造请求体时，改读 [前端实际调用接口手册](references/app-usage/README.md) 对应模块文档：它按教师端 App 真实调用整理了字段、后端校验与坑，比 interfaces/ 骨架完整，两者冲突时以它为准。
 3. 已知方法、路径和参数后直接调用，不为常规调用预先执行 `status`、`health` 或 `login`。仅在缺少凭据时处理登录，连接异常时才用 `health` 区分网关状态，401 时才重新验证密钥。
 4. 默认测试环境；只有用户或现有运行配置明确选择 production 时才传 `--env production`。环境、凭据或部署细节存在疑问时再读取 [运行时配置](references/runtime-configuration.md)，不能因测试失败而切换正式环境。
 5. 使用 `scripts/cpris_auth.py call`，或按 [网关契约](references/gateway-contract.md) 执行等价请求。脚本已经执行环境、路由、删除禁令、HTTP 状态和业务 code 检查；只有解释这些规则、处理特殊响应或缺少 Python 时才读取网关契约和 [请求与响应约定](references/schemas.md)。
@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cpris_call.ps1 -Meth
 ## 操作边界
 
 - 仅执行用户已经授权的操作。创建、更新、保存、绑定等按实际副作用判断，不能仅根据 GET/POST 判断只读。现有明确授权已覆盖的操作无需重复确认。
-- 新建或更新评估时，不能只提交 `childId`、`assessDefineId` 和审计字段。必须按原系统业务记录同时写入 `assessDate`、`assessAppointDate`、`realAssessPerson`、`employeeId` 和 `assessType`；`dgCreatedDate`、`dgCreatedBy` 仅是审计字段，不能替代评估时间或评估老师。C-PEP-3 等能力评估使用 `assessType: "1"`，评估老师账号应同时填入 `realAssessPerson` 和 `employeeId`。
+- 新建或更新评估时，不能只提交 `childId`、`assessDefineId` 和审计字段。必须同时提交 `assessDate`、`assessAppointDate`、`employeeId` 和 `assessType`（服务端按显式白名单落库，`assessAppointDate` 会被置为 `assessDate`，修改时也不能更换 childId）；`realAssessPerson` 不经该接口写入，由完成/生成类操作自动记录当前用户。`dgCreatedDate`、`dgCreatedBy` 仅是审计字段，不能替代评估时间或评估老师。C-PEP-3 等能力评估使用 `assessType: "1"`，评估老师账号填入 `employeeId`。字段级细节见 [评估模块手册](references/app-usage/assess.md)。
 - 新建儿童（`POST /childrenInfo/saveOrUpdate`，无 childId 即新建）时必须携带接待日期：请求体包含 `childrenVisitList: [{"jdrq": "<接待日期>"}]`，用户未指定时默认当前时间（ISO-8601 字符串或毫秒时间戳）。服务端只在 childrenVisitList 非空时写入 `t_children_visit`，不带则儿童没有接待记录和接待日期。更新已有儿童的 `childrenVisitList`/`childrenGuardianList` 是先删后插，必须传完整列表，禁止传 `[null]` 或残缺数据。
 - 网关禁止 DELETE 和删除路径，包括 POST /assess/delete 等。不得换方法、借用路由、编码或直连业务服务绕过。
 - 登录、短信、SaaS 数据/文件与 /ai/key/token 不在技能调用范围，完整网关路径也必须检查真实业务路径。
@@ -69,6 +69,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cpris_call.ps1 -Meth
 
 ## 按需参考
 
+- [前端实际调用接口手册（字段、必填、格式、后端约束与坑）](references/app-usage/README.md)
 - [配置、凭据与多智能体接入](references/runtime-configuration.md)
 - [路由、鉴权、删除禁令与错误处理](references/gateway-contract.md)
 - [参数绑定与请求响应](references/schemas.md)
