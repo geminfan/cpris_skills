@@ -65,4 +65,26 @@
 - **已验证**：`POST /childrenInfo/visit/saveOrUpdate`，请求体 `{"childId":"<id>","jdrq":<毫秒时间戳>}`（无 visitId 即插入；jdrq 用毫秒时间戳最稳，避免时区/格式歧义），返回 `{"msg":"保存成功","code":200}`。
 - **依据源码**：TChildrenVisitServiceImpl 是纯 MyBatis-Plus saveOrUpdate，visitId 为空走插入（UUID 自动生成、审计字段自动填充）；查询 SQL `getChildrenVisit` 按 `child_id` 过滤、不关联 rpId，补录后 `GET /childrenInfo/info` 能正常查出。走该接口 rpId 为空不影响展示；若业务需要 rpId 关联，改用主接口 `/childrenInfo/saveOrUpdate` 携带完整 childrenVisitList（先删后插）。
 
+## 2026-09-07 · PowerShell 多查询参数不能重复写 -Query
 
+- **现象**：调用 `cpris_call.ps1` 时重复写 `-Query current=1 -Query size=100`，PowerShell 报参数被指定多次；写成 `-Query current=1,size=100` 时，外层 powershell.exe 可能把它绑定成一个字符串，网关收到 `current=1%2Csize%3D100` 并返回数值转换错误。
+- **原因**：PowerShell 的数组参数绑定在跨进程 `-File` 调用时容易把逗号表达式当成单个实参；同名参数本身也不能重复出现。
+- **规避**：多个查询参数统一写入 UTF-8 `-QueryFile`，每行一个 `key=value`。儿童分页接口每页固定 10 条，`size` 不生效；全量查询直接按响应 `pages` 循环 `current=1..pages`，不要尝试放大页大小。
+
+## 2026-09-07 · 儿童名称筛选空结果会触发 SQL IN () 500
+
+- **现象**：`GET /childrenInfo/page?name=<名称>` 没有匹配儿童时，接口不是返回空 records，而是在补查康复过程时执行 `WHERE child_id IN ()`，产生 MySQL 语法错误并返回 HTTP 500。
+- **原因**：儿童分页查询的后续关联查询没有对空 childIds 做短路处理，是当前后端的空集合缺陷。
+- **规避**：把该特征性错误视为“名称筛选无匹配”，不要把原始 SQL 错误交付给用户，也不要自动重试同一请求。可用 `/childrenInfo/checkName` 做精确名称存在性校验；若响应数据受脱敏影响、名称查不到或候选不唯一，写操作前必须结合 childId、生日、状态、创建时间等稳定字段让用户确认目标，禁止仅凭脱敏名称猜测写入。
+
+## 2026-09-07 · 已有儿童生日字段的最小更新（已验证）
+
+- **场景**：只修改已有儿童的出生日期，不触碰监护人、接待记录或其他档案字段。
+- **已验证**：`POST /childrenInfo/saveOrUpdate`，请求体仅传 `{"childId":"<id>","birthday":"2020-06-17"}`，日期使用 `yyyy-MM-dd`，返回 `{"msg":"保存成功","code":200}`。
+- **规避**：先唯一确认 childId，再发送 `childId+birthday` 的最小请求体。不要回传详情实体，不要携带 `childrenVisitList`、`childrenGuardianList`、status 或审计字段；写操作超时或响应不确定时不要自动重试。
+
+## 2026-09-07 · 格赛尔量表需用 Gesell 检索且评估类型为 0
+
+- **现象**：用户常把量表称为“格赛尔评估”；调用 `/assessDefine/list` 用“格赛尔”或“格塞尔”筛选均返回空数组，用英文 `assessDefineName=Gesell` 可以命中。
+- **实际定义**：系统量表 code 为“格塞尔发育诊断量表(Gesell)”，`assessDefineType="0"`，属于诊断评估，不是能力评估 `"1"`。
+- **规避**：按 `Gesell` 搜索并以接口返回的 `assessDefineId`、`assessDefineType` 为准，不按用户口语名称猜测类型或硬编码量表 id。创建时仍须同时提交 childId、employeeId、assessDefineId、assessType、assessDate、assessAppointDate。
