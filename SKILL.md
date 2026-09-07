@@ -12,7 +12,7 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 1. 区分接口查询与实际业务操作。仅查文档、解释参数时不读取密钥、不要求登录、不发网络请求。
 2. 优先在 `references/interfaces/` 按 HTTP 路径或业务关键词搜索并只读取命中的接口详情；路径不明确时才读取 [接口总览](references/api-overview.md) 和对应模块索引。不要遍历或加载全部接口文档。需要确定请求字段、必填规则、日期格式或构造请求体时，改读 [前端实际调用接口手册](references/app-usage/README.md) 对应模块文档：它按教师端 App 真实调用整理了字段、后端校验与坑，比 interfaces/ 骨架完整，两者冲突时以它为准。
 3. 已知方法、路径和参数后直接调用，不为常规调用预先执行 `status`、`health` 或 `login`。仅在缺少凭据时处理登录，连接异常时才用 `health` 区分网关状态，401 时才重新验证密钥。
-4. 默认测试环境；只有用户或现有运行配置明确选择 production 时才传 `--env production`。环境、凭据或部署细节存在疑问时再读取 [运行时配置](references/runtime-configuration.md)，不能因测试失败而切换正式环境。
+4. 默认生产环境（production）；只有用户或现有运行配置明确选择 test 时才传 `--env test`。环境、凭据或部署细节存在疑问时再读取 [运行时配置](references/runtime-configuration.md)，不能因调用失败而自行切换环境。
 5. 使用 `scripts/cpris_auth.py call`，或按 [网关契约](references/gateway-contract.md) 执行等价请求。脚本已经执行环境、路由、删除禁令、HTTP 状态和业务 code 检查；只有解释这些规则、处理特殊响应或缺少 Python 时才读取网关契约和 [请求与响应约定](references/schemas.md)。
 6. 仅交付成功响应中的数据，按网关返回值展示。网关根据 API-Key 绑定账号的 ai_show 权限逐项决定是否脱敏；已授权返回的原文不额外遮盖，已遮盖内容不猜测或还原。
 7. 调用失败、网关报错或环境异常（例如机器没有 Python）时，先读取 [已知问题与规避](references/known-issues.md) 按既有方案处理，减少重复排查和调用耗时；新问题解决后把「日期、现象、原因、规避」追加到该文件末尾，避免其他智能体重复踩坑。Windows 无 Python 时用 `scripts/cpris_call.ps1` 执行等价调用。
@@ -25,8 +25,8 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 
 | 环境 | AI 网关：智能体请求目标 | 业务网关：仅服务端转发 |
 |---|---|---|
-| test（默认） | http://testai.cpris.com | http://test.cpris.com |
-| production | https://aiskills.cpris.com | https://teacherwx.cpris.com |
+| test | http://testai.cpris.com | http://test.cpris.com |
+| production（默认） | https://aiskills.cpris.com | https://teacherwx.cpris.com |
 
 地址及路由集中在 [gateway-config.json](references/gateway-config.json)。密钥绑定目标网关，测试密钥不自动复用到正式环境。
 
@@ -41,8 +41,8 @@ python scripts/cpris_auth.py login
 python scripts/cpris_auth.py call GET /user/info
 python scripts/cpris_auth.py call GET /childrenInfo/page --query current=1
 python scripts/cpris_auth.py call GET /training/list --query date=2026-09-03
-python scripts/cpris_auth.py --env production login
-python scripts/cpris_auth.py --env production call GET /user/info
+python scripts/cpris_auth.py --env test login
+python scripts/cpris_auth.py --env test call GET /user/info
 ~~~
 
 `call` 是已有凭据时的快速路径。login 隐藏输入密钥；无交互智能体优先由密钥管理器注入 CPRIS_TEST_API_KEY 或 CPRIS_PRODUCTION_API_KEY，也可使用 login --key-stdin。不要把密钥写在命令参数、脚本或对话回复里。仅验证时加 --no-save；环境密钥可直接用于 call，不要求先持久化。

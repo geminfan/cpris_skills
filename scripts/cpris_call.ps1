@@ -18,7 +18,7 @@
 param(
   [Parameter(Mandatory = $true)][ValidateSet('GET', 'POST', 'PUT', 'PATCH')][string]$Method,
   [Parameter(Mandatory = $true)][string]$Path,
-  [ValidateSet('test', 'production')][string]$EnvName = 'test',
+  [ValidateSet('test', 'production')][string]$EnvName = 'production',
   [string[]]$Query = @(),
   [string]$QueryFile,
   [string]$Body,

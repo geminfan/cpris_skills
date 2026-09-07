@@ -6,10 +6,10 @@
 
 | 环境 | AI 网关 | 业务网关（仅服务端） |
 |---|---|---|
-| test（默认） | http://testai.cpris.com | http://test.cpris.com |
-| production | https://aiskills.cpris.com | https://teacherwx.cpris.com |
+| test | http://testai.cpris.com | http://test.cpris.com |
+| production（默认） | https://aiskills.cpris.com | https://teacherwx.cpris.com |
 
-- 环境优先级：--env > CPRIS_ENV > 默认 test。
+- 环境优先级：--env > CPRIS_ENV > 默认 production。
 - 地址优先级：--gateway > CPRIS_AI_GATEWAY > 所选环境的 aiGateway。
 - 地址覆盖只接受配置中的两套 AI 地址。只提供地址时推导环境；同时提供环境但地址不匹配时拒绝。允许地址末尾斜杠。
 - 凭据文件仅校验 environment/gateway 绑定，不参与选择环境。

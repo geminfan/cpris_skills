@@ -1,5 +1,5 @@
 {
-  "defaultEnvironment": "test",
+  "defaultEnvironment": "production",
   "environments": {
     "test": {
       "aiGateway": "http://testai.cpris.com",

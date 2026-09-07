@@ -276,7 +276,7 @@ def emit(result):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CPRIS AI 网关客户端（默认测试环境）")
+    parser = argparse.ArgumentParser(description="CPRIS AI 网关客户端（默认生产环境）")
     parser.add_argument("--env", choices=("test", "production"))
     parser.add_argument("--gateway", help="已配置的 AI 网关地址；兼容 CPRIS_AI_GATEWAY")
     parser.add_argument("--timeout", type=float, default=30)

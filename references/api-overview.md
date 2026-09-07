@@ -4,7 +4,7 @@
 
 教师端 App（xipuApp2）实际调用的 84 个接口有更完整的字段级文档：[前端实际调用接口手册](app-usage/README.md)（含前端传参、必填、格式、后端校验与坑，优先使用）；本目录的 interfaces/ 为骨架级定位（Controller、行号、调用链）。
 
-路径为 {aiGateway}/ai/gw/{service}/{业务路径}。默认测试 http://testai.cpris.com，正式 https://aiskills.cpris.com 需显式选择。仅使用 X-Api-Key，业务网关由服务端访问。
+路径为 {aiGateway}/ai/gw/{service}/{业务路径}。默认正式 https://aiskills.cpris.com，测试 http://testai.cpris.com 需显式选择。仅使用 X-Api-Key，业务网关由服务端访问。
 
 | 模块 | 文档接口数 | service | 范围 |
 |---|---:|---|---|

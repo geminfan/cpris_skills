@@ -9,7 +9,7 @@ cpris_wxapp 对应的通用 AI 技能，入口为仓库根目录 [SKILL.md](SKIL
 不支持自动发现 SKILL.md 的智能体，可以读取入口作为工具使用说明，通过其终端工具执行 scripts/cpris_auth.py。只有 HTTP 工具的智能体按 [网关契约](references/gateway-contract.md) 请求相同接口；本仓库不是 MCP 服务。
 
 ~~~text
-使用 cpris-skills 查询儿童列表，默认测试环境。
+使用 cpris-skills 查询儿童列表，默认生产环境。
 使用 cpris-skills 解释 /training/list 的参数，不调用接口。
 ~~~
 
@@ -17,8 +17,8 @@ cpris_wxapp 对应的通用 AI 技能，入口为仓库根目录 [SKILL.md](SKIL
 
 | 环境 | AI 网关 | 业务网关（仅服务端） |
 |---|---|---|
-| test，当前默认 | http://testai.cpris.com | http://test.cpris.com |
-| production，显式切换 | https://aiskills.cpris.com | https://teacherwx.cpris.com |
+| test，显式切换 | http://testai.cpris.com | http://test.cpris.com |
+| production，当前默认 | https://aiskills.cpris.com | https://teacherwx.cpris.com |
 
 地址和映射维护在 [gateway-config.json](references/gateway-config.json)。客户端仅请求 AI 网关；部署时还需配置服务端认证和业务转发地址，见 [运行时配置](references/runtime-configuration.md)。
 
