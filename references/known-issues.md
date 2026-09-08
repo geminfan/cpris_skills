@@ -88,3 +88,32 @@
 - **现象**：用户常把量表称为“格赛尔评估”；调用 `/assessDefine/list` 用“格赛尔”或“格塞尔”筛选均返回空数组，用英文 `assessDefineName=Gesell` 可以命中。
 - **实际定义**：系统量表 code 为“格塞尔发育诊断量表(Gesell)”，`assessDefineType="0"`，属于诊断评估，不是能力评估 `"1"`。
 - **规避**：按 `Gesell` 搜索并以接口返回的 `assessDefineId`、`assessDefineType` 为准，不按用户口语名称猜测类型或硬编码量表 id。创建时仍须同时提交 childId、employeeId、assessDefineId、assessType、assessDate、assessAppointDate。
+
+## 2026-09-07 · 正式 AI 网关域名 aiskills.cpris.com 无法解析
+
+- **现象**：对 production 环境调用任何接口均失败，`cpris_call.ps1` 返回 `NO_RESPONSE`（exit 1）；curl 错误码 6（couldn't resolve host）。
+- **原因**：`aiskills.cpris.com` 在本机 DNS（OrayBox）及公共 DNS（223.5.5.5、8.8.8.8）均为 NXDOMAIN，域名无解析记录；同 IP 段的 `teacherwx.cpris.com`、`testai.cpris.com` 均正常解析。属服务端 DNS/部署未就绪，非客户端问题。
+- **规避**：遇到 `NO_RESPONSE`/curl 6 先 `nslookup` 区分 DNS 与网络问题；正式网关域名解析恢复前无法访问 production。注意：production 密钥在 testai 网关返回 401，密钥环境不通用，不要拿 production 密钥打 test 网关排查。
+
+## 2026-09-08 · 生成 IEP 康复指导：直调 generate 500，改查空自动生成（已验证）
+
+- **现象**：`POST /assessGuide/generate`，body `{"assessId":"..."}` 直接生成 IEP，返回 HTTP 500（`{"code":500,...}`），且不产生任何数据。
+- **规避（已验证）**：改用 `POST /assessGuide/teacher/guide/list`，body `{"assessId":"..."}`——教师 IEP 列表为空时服务端会自动生成并落库，再次查询即返回已生成的 IEP；教师端模块用 `teacher`，家长端为 `parent`。
+- **后续建个训计划的推荐数据来源**：`GET /periodical/item/list?assessDefineId=<defineId>&childId=<childId>`，返回多个领域的 `teacherSubGuideList` → `teacherSubGuideItemList[].id`（即推荐子项 id），可据此构造个训计划明细。
+
+## 2026-09-08 · 结果/生成接口的领域名被网关遮盖，全名从问卷定义对照
+
+- **现象**：`/assess/result/list`、`/assess/result/generate` 返回的 `tabResultitemList[].questionCodeName` 被网关按展示权限遮盖，如「模*」「知*」，不能直接把该值交付给用户。
+- **规避**：全名不受遮盖，须从问卷定义取：`GET /assessDefine/paper/list?assessDefineId=<defineId>` → `paperContent`(JSON 字符串) → `tabResultitemList[]`，用 `questionResultId` ↔ `questionCodeName` 一一对应做键对照出领域全名；**数值仍以 result 类接口返回值为准**，不要用问卷定义中的静态默认值推算。
+
+## 2026-09-08 · 个训阶段计划创建与校验（已验证流程）
+
+- **建计划链路**：
+  1. 推荐子项 id 列表转明细：`POST /periodical/plan/subGuideItem/list`，body 为数组，每领域一项 `{"type":"1","assessDefineId":"<defineId>","subGuideItemIds":[...]}`，返回含 `item/subItem/content/id` 的明细对象；
+  2. 创建：`POST /periodical/plan/saveOrUpdate`，body `{"childId":...,"childName":...,"name":...,"fromDate":...,"toDate":...,"planDetailList":[...]}`。`teacherName` 服务端强制为当前用户；`status=1`(草稿)、`type=01`(个训)、康复档案 rpId 自动关联，无需也不应传。
+- **坑**：`GET /periodical/year/list?date=<年>` 返回记录的 `planDetailList` 恒为空数组（列表接口不含明细），**不能据此确认明细条数**；校验明细须用 `GET /periodical/plan/info?planId=<id>`。
+
+## 2026-09-08 · cpris_auth.py call 输出重定向到文件偶发失败
+
+- **现象**：`python scripts/cpris_auth.py call GET ... > out.json` 偶发报「配置、输入或文件操作失败」，落盘内容为空或失败；不重定向直接看 stdout 正常。
+- **规避**：疑似瞬时文件句柄/缓冲问题，重定向失败时**换一个文件名重试即成功**；大 JSON 解析前用唯一文件名（如 `tmp_*.json`）重定向，失败就换名重试，或先不加 `>file` 直接查 stdout。
