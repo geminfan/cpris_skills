@@ -95,25 +95,57 @@
 - **原因**：`aiskills.cpris.com` 在本机 DNS（OrayBox）及公共 DNS（223.5.5.5、8.8.8.8）均为 NXDOMAIN，域名无解析记录；同 IP 段的 `teacherwx.cpris.com`、`testai.cpris.com` 均正常解析。属服务端 DNS/部署未就绪，非客户端问题。
 - **规避**：遇到 `NO_RESPONSE`/curl 6 先 `nslookup` 区分 DNS 与网络问题；正式网关域名解析恢复前无法访问 production。注意：production 密钥在 testai 网关返回 401，密钥环境不通用，不要拿 production 密钥打 test 网关排查。
 
-## 2026-09-08 · 生成 IEP 康复指导：直调 generate 500，改查空自动生成（已验证）
+## 2026-09-09 · Git Bash 会把 -Path /xxx 的前导斜杠转成本地路径
 
-- **现象**：`POST /assessGuide/generate`，body `{"assessId":"..."}` 直接生成 IEP，返回 HTTP 500（`{"code":500,...}`），且不产生任何数据。
-- **规避（已验证）**：改用 `POST /assessGuide/teacher/guide/list`，body `{"assessId":"..."}`——教师 IEP 列表为空时服务端会自动生成并落库，再次查询即返回已生成的 IEP；教师端模块用 `teacher`，家长端为 `parent`。
-- **后续建个训计划的推荐数据来源**：`GET /periodical/item/list?assessDefineId=<defineId>&childId=<childId>`，返回多个领域的 `teacherSubGuideList` → `teacherSubGuideItemList[].id`（即推荐子项 id），可据此构造个训计划明细。
+- **现象**：在 Git Bash 中执行 `cpris_call.ps1 -Path /childrenInfo/page`，脚本报 "path contains whitespace, backslash, bad escape or duplicate slash"，实际收到的 Path 已被 MSYS 改写为 `C:/Program Files/Git/childrenInfo/page`。
+- **原因**：Git Bash 的 MSYS 路径转换会把以 `/` 开头的参数当作 POSIX 路径映射到安装目录。
+- **规避**：命令前加 `MSYS_NO_PATHCONV=1`，或改在 cmd/PowerShell 中直接调用；网关路径必须保持原样以 `/` 开头。
 
-## 2026-09-08 · 结果/生成接口的领域名被网关遮盖，全名从问卷定义对照
+## 2026-09-09 · POST /assessGuide/teacher/guide/list 在 production 返回 500（缺表）
 
-- **现象**：`/assess/result/list`、`/assess/result/generate` 返回的 `tabResultitemList[].questionCodeName` 被网关按展示权限遮盖，如「模*」「知*」，不能直接把该值交付给用户。
-- **规避**：全名不受遮盖，须从问卷定义取：`GET /assessDefine/paper/list?assessDefineId=<defineId>` → `paperContent`(JSON 字符串) → `tabResultitemList[]`，用 `questionResultId` ↔ `questionCodeName` 一一对应做键对照出领域全名；**数值仍以 result 类接口返回值为准**，不要用问卷定义中的静态默认值推算。
+- **现象**：对评估 id 调用教师康复指导列表接口，HTTP 500，后端报 `Table 'c3326.t_assess_define_iep_config' doesn't exist`。
+- **原因**：production 数据库缺少 `t_assess_define_iep_config` 表（该量表问卷的 IEP 配置查询直接查库报错），属服务端部署缺陷。
+- **规避**：不要重试或换参数；需要"评估→训练条目"关联时改用 `GET /periodical/recent/item/List?childId=...&content=`（返回最近计划明细，含 assessDefineId/subGuideItemId/recoverItem/recoverSubItem），配合 `GET /assess/list`（按 childId+assessProgress=3）定位对应评估实例。
 
-## 2026-09-08 · 个训阶段计划创建与校验（已验证流程）
+## 2026-09-09 · /periodical/plan/subGuideItem/list 对已落库明细返回空、且评估领域与康复领域码是两套体系
 
-- **建计划链路**：
-  1. 推荐子项 id 列表转明细：`POST /periodical/plan/subGuideItem/list`，body 为数组，每领域一项 `{"type":"1","assessDefineId":"<defineId>","subGuideItemIds":[...]}`，返回含 `item/subItem/content/id` 的明细对象；
-  2. 创建：`POST /periodical/plan/saveOrUpdate`，body `{"childId":...,"childName":...,"name":...,"fromDate":...,"toDate":...,"planDetailList":[...]}`。`teacherName` 服务端强制为当前用户；`status=1`(草稿)、`type=01`(个训)、康复档案 rpId 自动关联，无需也不应传。
-- **坑**：`GET /periodical/year/list?date=<年>` 返回记录的 `planDetailList` 恒为空数组（列表接口不含明细），**不能据此确认明细条数**；校验明细须用 `GET /periodical/plan/info?planId=<id>`。
+- **现象**：用个训计划明细里的 subGuideItemId（type=1/2/3 各试）调 `POST /periodical/plan/subGuideItem/list` 均返回空数组；`GET /periodical/item/list`（评估推荐 IEP）对 8b01b888 量表返回"无推荐iep数据"。
+- **原因**：该勾选转换接口面向"从推荐/IEP 库勾选生成计划"的场景，直接回查已落库明细拿不到映射；推荐 IEP 依赖教师康复指导链路，而该链路查 `t_assess_define_iep_config` 在 production 缺表报 500（见上条），导致推荐数据无法生成。
+- **规避**：注意两套领域码不要混用——量表评估领域是 `questionCode`（如 SNAP 类的 tbehavior/tperformance/Cbperformance，来自 /assessDefine/items/list 与 /assess/result/item/info）；计划明细的 `recoverItem`（EMO/ACA/GM/ATT/IMP/SOC）是康复指导领域码，不是量表领域 questionCode。向用户展示"训练条目↔评估领域"时必须用 questionCode 体系，recoverItem 只能作为康复分类参考。
 
-## 2026-09-08 · cpris_auth.py call 输出重定向到文件偶发失败
+## 2026-09-09 · 【规范】新增个训计划明细的 recoverItem 必须用现有评估的领域代码（questionCode）
 
-- **现象**：`python scripts/cpris_auth.py call GET ... > out.json` 偶发报「配置、输入或文件操作失败」，落盘内容为空或失败；不重定向直接看 stdout 正常。
-- **规避**：疑似瞬时文件句柄/缓冲问题，重定向失败时**换一个文件名重试即成功**；大 JSON 解析前用唯一文件名（如 `tmp_*.json`）重定向，失败就换名重试，或先不加 `>file` 直接查 stdout。
+- **背景**：迪卡 2026年10月计划明细落库时 `recoverItem` 用了康复领域码（EMO/ACA/GM/ATT/IMP/SOC），与量表评估领域 `questionCode`（如 SNAP 类的 tbehavior/tperformance/Cbperformance）是两套体系，导致训练条目无法正确关联评估领域，已通过 `POST /periodical/plan/saveOrUpdate` 整体改写为 questionCode 修正。
+- **规则（今后必须遵守）**：新增/修改个训阶段计划（/periodical/plan/saveOrUpdate）的 planDetailList 时，`recoverItem` 一律填目标评估量表的真实领域代码 questionCode，来源按顺序取：① 该评估 `GET /assess/result/item/info?assessId=` 的 tabResultitemList[].questionCode；② `GET /assessDefine/items/list?assessDefineId=` 的 questionCode。
+- **兜底**：用户无法提供/内容无法归入任何现有领域时，`recoverItem` 填 `OTHER`（“其他”量表固定 id `9ac65a3617af4f24b1265b53906e8459`，code=OTHER），保证条目仍能在“其他”评估领域下展示，不允许再使用 EMO/ACA/GM 等康复领域码充当评估领域。
+- **保存注意**：saveOrUpdate 是整单覆盖，必须带计划 id 完整回传全部明细（id/recoverSubItem/content/subGuideItemId/assessDefineId/status 原值保留），只改目标字段；写操作失败不自动重试。
+
+## 2026-09-09 · 【他人经验沉淀】个训计划/评估/建档的高频坑（来自其他用户技能包 skills.rar）
+
+> 来源：其他用户的 cpris-training-plan-generator / cpris-child-registration / cpris-assessment-create / cpris-scan-import 四个技能文档，2026-09-09 分析提炼，去重后收录。
+
+### 个训计划（/periodical）
+- **`/periodical/year/list` 不按 childId 过滤**：即使传了 childId 也返回（当前教师可见的）全部儿童计划，且返回列表里 planDetailList 可能为空；要拿某儿童计划必须逐条 `GET /periodical/plan/info?planId=` 再核对 childId。
+- **saveOrUpdate 成功响应 data 可能为 null**：创建成功不返回计划 id，需事后用 `/periodical/year/list`（按 dgCreatedDate 最新）+ plan/info 找到新计划 id 再核验；更新时必须带计划 id 完整回传。
+- **`scheduleDefineId` 可以为 null**：无排课时直接传 null 即可，不必强行查询排课。
+- **训练推荐项目层级**：`GET /periodical/item/list` 返回 领域组(item=questionCode/itemName) → teacherSubGuideList → teacherSubGuideItemList（叶子）；planDetail 的 subGuideItemId=叶子 id、content=叶子 content、recoverItem=领域组 item——对 C-PEP-3 这类量表，领域组 item 就是量表 questionCode（P/GM/VMI/FM/EH/CP/CV），与本文件上方 recoverItem 规范一致。推荐项目共 9 个领域（7 核心 + AB 适应行为、PSC 个人自理），训练计划只用 7 个核心领域。
+- **弱项分配参考**：按各领域平均发展龄升序（ageRange 字符串 "58~61" split 取均值），项目数按 4/3/3/2/2/1/1 共约 16 条；写入前先查已有计划避免 subGuideItemId 重复。
+
+### 评估（/assess）
+- **新建评估的 id 在响应 msg 字段**：`POST /assess/saveOrUpdate` 成功后评估 id 返回在 `msg`（不是 data.data），新建默认 assessProgress="2"（未完成）。
+- **/assess/list 的 childName/assessProgress 过滤不可靠**：服务端常忽略过滤参数返回全量，必须客户端按 childId+assessProgress 自行筛选（entityid 是全小写字段名，即评估 id）。
+- **重复评估无法通过 API 删除**（删除禁令），需到小程序/后台 UI 处理。
+
+### 建档查重（/childrenInfo）
+- **checkName 会漏报**：档案已存在仍可能返回 false，checkName 只能当预检；必须再用 `POST /childrenInfo/list` body {"name":...} 交叉核验（返回空数组=无同名；HTTP 500=IN() 空集合缺陷，同样视为无同名）。
+- **不要用 `GET /childrenInfo/page?name=` 做查重/姓名过滤**：无匹配报 SQL IN() 500，且多个 query 参数时可能不按姓名过滤返回全量；姓名过滤一律走 POST /childrenInfo/list body。
+- **建档最小请求体**：只传用户点名字段 + childrenVisitList[{jdrq(毫秒时间戳), zdmc(字典诊断text), jdz(接待教师employeeId)}]；jdrq 用毫秒时间戳最稳。写操作警惕沙箱提权重跑导致双写；落库后用 list 唯一性核验（>1 条=重复落库，只能 UI 删）。
+
+### 扫描评估导入（补充 assessment-form-import.md）
+- **先判形态再选路径**：有文本层且含 ✓/√ 字形=数字导出版（纯文本解析秒级）；文本层乱/全墨迹=手写扫描版（150DPI 全览+仅对模糊行 400-600DPI 局部放大，不要整页高 DPI）。
+- **文字层绝不能当勾选判据**：空圈可能是 O 字形或矢量圈，唯一可靠是渲染后视觉；两个选项同时被勾不擅自挑，列出让用户定。
+- **resultContent 骨架可能少于问卷定义总题数**：系统按儿童月龄过滤超龄段题（实测感统 58 题定义只生成 55 题骨架），一律以 result 骨架为准，不硬塞 PDF 上的超龄题。
+- **非 C-PEP-3 量表的计分别套 P=1 规则**：中文长选项卷（感统等）objValue 存选项文本、objScore 按问卷定义 tabQuestionScore 分值表映射（如从不这样5…总是如此1）。
+
+### 环境差异（JWT 直连用户补充）
+- 旧方案直连业务网关（test.cpris.com / teacherwx.cpris.com）用 JWT Bearer Token，两网关 Token 不通用、JWT 有时效；本技能统一走 AI 网关 X-Api-Key，不适用 Token 问题，但"成功 code=200 不是 0"的判断对所有环境一致。
