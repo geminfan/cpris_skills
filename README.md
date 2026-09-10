@@ -13,6 +13,24 @@ cpris_wxapp 对应的通用 AI 技能，入口为仓库根目录 [SKILL.md](SKIL
 使用 cpris-skills 解释 /training/list 的参数，不调用接口。
 ~~~
 
+## 版本自检与更新
+
+本仓库通过 Gitee 分发，消费方在使用前自检更新，不依赖任何主动通知。git 克隆场景执行：
+
+~~~bash
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_update.ps1
+~~~
+
+- 智能体按输出行前缀处理：`UPDATED`（已自动 `pull --ff-only`，可能附带 `SYNCED` 已同步本机安装目录）、`LATEST`、`SKIP` 均直接继续使用；`WARN` 表示网络或 git 异常，忽略并继续，不要重试阻塞；`OUTDATED` 表示当前目录不是 git 克隆且远程有新版本，需手动重新拉取或复制。
+- 速度保障：距上次联网检查不足 4 小时直接 `SKIP`（`-TtlSeconds` 可调，`-Force` 强制检查）；联网检查带 5 秒低速超时并禁止交互式凭据提示，离线零阻塞，日常调用无感知开销。
+- 不走 git 的消费方直接对比版本号（公开仓库可匿名读取）：
+
+~~~bash
+curl https://gitee.com/min-fan-ge/cpris_skills/raw/main/VERSION
+~~~
+
+- 推送纪律：每次推送前更新根目录 [VERSION](VERSION) 并在 [CHANGELOG.md](CHANGELOG.md) 顶部追加本次变更，否则消费方无法感知语义变化。
+
 ## 环境与使用
 
 | 环境 | AI 网关 | 业务网关（仅服务端） |

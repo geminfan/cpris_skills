@@ -16,6 +16,7 @@ description: 查询 CPRIS 微信端 REST 接口、解释参数与返回类型，
 5. 使用 `scripts/cpris_auth.py call`，或按 [网关契约](references/gateway-contract.md) 执行等价请求。脚本已经执行环境、路由、删除禁令、HTTP 状态和业务 code 检查；只有解释这些规则、处理特殊响应或缺少 Python 时才读取网关契约和 [请求与响应约定](references/schemas.md)。
 6. 仅交付成功响应中的数据，按网关返回值展示。网关根据 API-Key 绑定账号的 ai_show 权限逐项决定是否脱敏；已授权返回的原文不额外遮盖，已遮盖内容不猜测或还原。
 7. 调用失败、网关报错或环境异常（例如机器没有 Python）时，先读取 [已知问题与规避](references/known-issues.md) 按既有方案处理，减少重复排查和调用耗时；新问题解决后把「日期、现象、原因、规避」追加到该文件末尾，避免其他智能体重复踩坑。Windows 无 Python 时用 `scripts/cpris_call.ps1` 执行等价调用。
+8. 技能目录来自 git 克隆时，首次使用前执行一次 `scripts/check_update.ps1` 自检更新：输出 `UPDATED`、`LATEST` 或 `SKIP` 均直接继续，`WARN` 忽略并继续，不得重试阻塞调用。脚本默认 4 小时联网节流、5 秒超时，不影响调用速度；当前版本与历史变更见仓库根 `VERSION` 与 `CHANGELOG.md`。
 
 ## 纸质评估导入
 
